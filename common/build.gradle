@@ -1,0 +1,16 @@
+plugins { id 'java-library' }
+dependencies {
+    api 'com.github.luben:zstd-jni:1.5.7-7'
+    compileOnly 'io.netty:netty-codec:4.1.118.Final'
+    compileOnly 'io.netty:netty-transport:4.1.118.Final'
+    compileOnly 'com.google.code.gson:gson:2.11.0'
+    testImplementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation 'io.netty:netty-codec:4.1.118.Final'
+    testImplementation 'io.netty:netty-transport:4.1.118.Final'
+    testImplementation 'io.netty:netty-handler:4.1.118.Final'
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+java { withSourcesJar() }
+jar { from(rootProject.file('LICENSE')) }

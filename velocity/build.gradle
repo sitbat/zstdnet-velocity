@@ -1,0 +1,26 @@
+plugins { id 'java' }
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+
+dependencies {
+    // The verified, official 4.3.0 build 44 distribution supplies exactly the target API
+    // and Netty classes. It is deliberately never bundled in the plugin.
+    compileOnly files(rootProject.file('runtime/velocity-4.3.0-44.jar'))
+    implementation project(':common')
+    implementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation files(rootProject.file('runtime/velocity-4.3.0-44.jar'))
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('jar') {
+    dependsOn ':common:jar'
+    archiveBaseName = 'zstdnet-velocity'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+    from(rootProject.file('LICENSE'))
+    exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA', 'module-info.class'
+}
+
+java { withSourcesJar() }

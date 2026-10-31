@@ -1,0 +1,8 @@
+{
+  "id": "zstdnet-proxy",
+  "name": "ZstdNet Velocity",
+  "version": "2.1.0",
+  "description": "Authenticated Zstd transport for the client connection of Velocity 4.3.0.",
+  "authors": ["wish131400"],
+  "main": "cn.tohsaka.zstdnet.velocity.ZstdNetVelocityPlugin"
+}

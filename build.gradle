@@ -1,0 +1,16 @@
+allprojects {
+    group = 'cn.tohsaka.zstdnet'
+    version = '2.1.0'
+    repositories { mavenCentral() }
+}
+
+subprojects {
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.release = 21
+    }
+    plugins.withId('java') {
+        java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+        tasks.withType(Test).configureEach { useJUnitPlatform() }
+    }
+}

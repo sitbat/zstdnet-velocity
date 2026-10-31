@@ -1,0 +1,2 @@
+rootProject.name = 'zstdnet-velocity'
+include 'common', 'velocity'

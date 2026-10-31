@@ -1,0 +1,1426 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" type="image/png" href="data:image/png;base64,/*__ZSTDNET_LOGO__*/">
+  <title>ZstdNet 流量统计</title>
+  <script>
+    (() => {
+      try {
+        const saved = localStorage.getItem('zstdnet-report-theme');
+        const savedAccent = localStorage.getItem('zstdnet-report-accent');
+        const accentAliases = { classic:'default', vivid:'sea', soft:'warm-sand' };
+        const normalizedAccent = accentAliases[savedAccent] || savedAccent;
+        const preferred = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        document.documentElement.dataset.theme = saved === 'light' || saved === 'dark' ? saved : preferred;
+        document.documentElement.dataset.accent = ['default','warm-sand','mono','midnight','rose','aurora','sunset','forest','sea','lavender'].includes(normalizedAccent) ? normalizedAccent : 'default';
+      } catch (ignored) {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    })();
+  </script>
+  <style>
+    :root {
+      --bg: #07111d;
+      --panel: #0f1b29;
+      --panel-2: #142333;
+      --line: #263b4d;
+      --line-soft: rgba(148,190,224,.10);
+      --text: #f1f6fa;
+      --muted: #91a2b3;
+      --muted-2: #64798c;
+      --blue: #4ca4e0;
+      --action: #2c78ad;
+      --blue-soft: rgba(76,164,224,.16);
+      --orange: #e39a55;
+      --orange-soft: rgba(227,154,85,.16);
+      --blue-muted: rgba(76,164,224,.34);
+      --orange-muted: rgba(227,154,85,.34);
+      --green: #54bd89;
+      --green-soft: rgba(84,189,137,.14);
+      --red: #e06f70;
+      --status-text: #c9d7e2;
+      --chip-bg: rgba(134,180,216,.04);
+      --chip-text: #c6d4df;
+      --surface-shine: rgba(166,211,244,.055);
+      --surface-glow: rgba(99,166,216,.03);
+      --glass-panel: rgba(15,27,41,.88);
+      --glass-border: rgba(133,175,209,.18);
+      --glass-highlight: rgba(200,229,250,.11);
+      --glass-sheen: rgba(95,171,226,.065);
+      --accent-bubble: #4ca4e0;
+      --accent-bubble-2: #e39a55;
+      --toggle-face: #203244;
+      --toggle-ink: #e8f3fa;
+      --tooltip-bg: rgba(9,20,31,.97);
+      --tooltip-border: #34516a;
+      --quiet-strong: #d8e5ee;
+      --meter-bg: #223646;
+      --table-text: #ccdbe6;
+      --chart-grid: rgba(133,175,209,.12);
+      --chart-label: #70879b;
+      --radius: 16px;
+      --shadow: 0 20px 46px rgba(0,5,12,.30);
+      /* 深海蓝环境光，保留层次但不引入紫粉霓虹 */
+      --aurora-1: rgba(37,115,166,.14);
+      --aurora-2: rgba(177,91,45,.075);
+      --aurora-3: rgba(42,122,104,.065);
+      --aurora-4: rgba(53,82,130,.11);
+      --grain-opacity: .03;
+      --glass-border-strong: rgba(144,193,231,.31);
+      --glass-blur: 16px;
+      /* 清晰但不过曝的卡片环境色 */
+      --glow-blue: rgba(76,164,224,.23);
+      --glow-orange: rgba(227,154,85,.20);
+      --glow-green: rgba(84,189,137,.17);
+      --glow-violet: rgba(75,126,174,.17);
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f2f8fc;
+      --panel: #ffffff;
+      --panel-2: #e9f2f8;
+      --line: #c8d9e5;
+      --line-soft: rgba(35,77,108,.10);
+      --text: #172534;
+      --muted: #607588;
+      --muted-2: #8396a6;
+      --blue: #236f9f;
+      --action: #1f6692;
+      --blue-soft: rgba(35,111,159,.11);
+      --orange: #a95b28;
+      --orange-soft: rgba(169,91,40,.11);
+      --blue-muted: rgba(35,111,159,.28);
+      --orange-muted: rgba(169,91,40,.28);
+      --green: #23794f;
+      --green-soft: rgba(35,121,79,.11);
+      --red: #b24b50;
+      --status-text: #344d60;
+      --chip-bg: rgba(35,111,159,.035);
+      --chip-text: #38566d;
+      --surface-shine: rgba(255,255,255,.72);
+      --surface-glow: rgba(35,111,159,.035);
+      --glass-panel: rgba(255,255,255,.91);
+      --glass-border: rgba(50,98,133,.16);
+      --glass-highlight: rgba(255,255,255,.9);
+      --glass-sheen: rgba(35,111,159,.055);
+      --accent-bubble: #2d7eaf;
+      --accent-bubble-2: #b96832;
+      --toggle-face: #dceaf3;
+      --toggle-ink: #1c3344;
+      --tooltip-bg: rgba(251,253,255,.98);
+      --tooltip-border: #b8cedd;
+      --quiet-strong: #2e485c;
+      --meter-bg: #d8e6ef;
+      --table-text: #304c61;
+      --chart-grid: rgba(50,98,133,.13);
+      --chart-label: #71889a;
+      --shadow: 0 14px 34px rgba(25,64,92,.10);
+      /* 冷白背景上的轻量蓝橙环境光 */
+      --aurora-1: rgba(35,111,159,.09);
+      --aurora-2: rgba(169,91,40,.055);
+      --aurora-3: rgba(35,121,79,.045);
+      --aurora-4: rgba(55,103,154,.065);
+      --grain-opacity: .018;
+      --glass-border-strong: rgba(35,79,112,.29);
+      --glass-blur: 14px;
+      --glow-blue: rgba(35,111,159,.13);
+      --glow-orange: rgba(169,91,40,.115);
+      --glow-green: rgba(35,121,79,.10);
+      --glow-violet: rgba(42,100,148,.10);
+      color-scheme: light;
+    }
+    /* 参考色板：每套预设同时控制数据色、环境光和卡片辉光 */
+    :root[data-accent="warm-sand"] {
+      --blue:#f8d7ca; --orange:#4fc0b2; --blue-soft:rgba(248,215,202,.16); --orange-soft:rgba(79,192,178,.16);
+      --blue-muted:rgba(248,215,202,.34); --orange-muted:rgba(79,192,178,.34); --accent-bubble:#f3b9a5; --accent-bubble-2:#4fc0b2;
+      --aurora-1:rgba(248,215,202,.13); --aurora-2:rgba(79,192,178,.10); --glow-blue:rgba(248,215,202,.22); --glow-orange:rgba(79,192,178,.20);
+    }
+    :root[data-accent="mono"] {
+      --blue:#e0e0e0; --orange:#5ca9e6; --blue-soft:rgba(224,224,224,.14); --orange-soft:rgba(92,169,230,.16);
+      --blue-muted:rgba(224,224,224,.30); --orange-muted:rgba(92,169,230,.34); --accent-bubble:#d0d0d0; --accent-bubble-2:#5ca9e6;
+      --aurora-1:rgba(182,182,182,.08); --aurora-2:rgba(92,169,230,.085); --glow-blue:rgba(224,224,224,.16); --glow-orange:rgba(92,169,230,.20);
+    }
+    :root[data-accent="midnight"] {
+      --blue:#7fa18a; --orange:#d978a9; --blue-soft:rgba(127,161,138,.15); --orange-soft:rgba(217,120,169,.16);
+      --blue-muted:rgba(127,161,138,.32); --orange-muted:rgba(217,120,169,.34); --accent-bubble:#7fa18a; --accent-bubble-2:#d978a9;
+      --aurora-1:rgba(98,116,104,.13); --aurora-2:rgba(217,120,169,.11); --glow-blue:rgba(127,161,138,.20); --glow-orange:rgba(217,120,169,.22);
+    }
+    :root[data-accent="rose"] {
+      --blue:#f45f84; --orange:#47c4d5; --blue-soft:rgba(244,95,132,.17); --orange-soft:rgba(71,196,213,.16);
+      --blue-muted:rgba(244,95,132,.35); --orange-muted:rgba(71,196,213,.34); --accent-bubble:#ef426c; --accent-bubble-2:#47c4d5;
+      --aurora-1:rgba(239,66,108,.13); --aurora-2:rgba(71,196,213,.10); --glow-blue:rgba(244,95,132,.24); --glow-orange:rgba(71,196,213,.21);
+    }
+    :root[data-accent="aurora"] {
+      --blue:#16c9a4; --orange:#f0aa5b; --blue-soft:rgba(22,201,164,.17); --orange-soft:rgba(240,170,91,.17);
+      --blue-muted:rgba(22,201,164,.35); --orange-muted:rgba(240,170,91,.35); --accent-bubble:#00be90; --accent-bubble-2:#f0aa5b;
+      --aurora-1:rgba(0,190,144,.14); --aurora-2:rgba(240,170,91,.11); --glow-blue:rgba(22,201,164,.24); --glow-orange:rgba(240,170,91,.22);
+    }
+    :root[data-accent="sunset"] {
+      --blue:#e96755; --orange:#55aee6; --blue-soft:rgba(233,103,85,.17); --orange-soft:rgba(85,174,230,.17);
+      --blue-muted:rgba(233,103,85,.35); --orange-muted:rgba(85,174,230,.35); --accent-bubble:#d95346; --accent-bubble-2:#55aee6;
+      --aurora-1:rgba(217,83,70,.14); --aurora-2:rgba(85,174,230,.11); --glow-blue:rgba(233,103,85,.24); --glow-orange:rgba(85,174,230,.22);
+    }
+    :root[data-accent="forest"] {
+      --blue:#269a91; --orange:#dfa24a; --blue-soft:rgba(38,154,145,.16); --orange-soft:rgba(223,162,74,.17);
+      --blue-muted:rgba(38,154,145,.33); --orange-muted:rgba(223,162,74,.35); --accent-bubble:#157a75; --accent-bubble-2:#dfa24a;
+      --aurora-1:rgba(21,122,117,.14); --aurora-2:rgba(223,162,74,.10); --glow-blue:rgba(38,154,145,.22); --glow-orange:rgba(223,162,74,.20);
+    }
+    :root[data-accent="sea"] {
+      --blue:#5278f5; --orange:#f18a62; --blue-soft:rgba(82,120,245,.17); --orange-soft:rgba(241,138,98,.17);
+      --blue-muted:rgba(82,120,245,.35); --orange-muted:rgba(241,138,98,.35); --accent-bubble:#3a64ed; --accent-bubble-2:#f18a62;
+      --aurora-1:rgba(58,100,237,.14); --aurora-2:rgba(241,138,98,.11); --glow-blue:rgba(82,120,245,.25); --glow-orange:rgba(241,138,98,.22);
+    }
+    :root[data-accent="lavender"] {
+      --blue:#af8be1; --orange:#6cc7ae; --blue-soft:rgba(175,139,225,.16); --orange-soft:rgba(108,199,174,.16);
+      --blue-muted:rgba(175,139,225,.34); --orange-muted:rgba(108,199,174,.34); --accent-bubble:#9877cd; --accent-bubble-2:#6cc7ae;
+      --aurora-1:rgba(152,119,205,.13); --aurora-2:rgba(108,199,174,.11); --glow-blue:rgba(175,139,225,.23); --glow-orange:rgba(108,199,174,.21);
+    }
+    :root[data-theme="light"][data-accent="warm-sand"] { --blue:#a84f3b; --orange:#0a7772; --blue-soft:rgba(168,79,59,.11); --orange-soft:rgba(10,119,114,.11); --blue-muted:rgba(168,79,59,.27); --orange-muted:rgba(10,119,114,.27); }
+    :root[data-theme="light"][data-accent="mono"] { --blue:#444; --orange:#166b9d; --blue-soft:rgba(68,68,68,.09); --orange-soft:rgba(22,107,157,.10); --blue-muted:rgba(68,68,68,.23); --orange-muted:rgba(22,107,157,.25); }
+    :root[data-theme="light"][data-accent="midnight"] { --blue:#3f6550; --orange:#a23d76; --blue-soft:rgba(63,101,80,.10); --orange-soft:rgba(162,61,118,.11); --blue-muted:rgba(63,101,80,.25); --orange-muted:rgba(162,61,118,.27); }
+    :root[data-theme="light"][data-accent="rose"] { --blue:#b92c53; --orange:#077f90; --blue-soft:rgba(185,44,83,.11); --orange-soft:rgba(7,127,144,.11); --blue-muted:rgba(185,44,83,.27); --orange-muted:rgba(7,127,144,.27); }
+    :root[data-theme="light"][data-accent="aurora"] { --blue:#007a64; --orange:#a75e20; --blue-soft:rgba(0,122,100,.10); --orange-soft:rgba(167,94,32,.11); --blue-muted:rgba(0,122,100,.25); --orange-muted:rgba(167,94,32,.27); }
+    :root[data-theme="light"][data-accent="sunset"] { --blue:#aa3f32; --orange:#197aa8; --blue-soft:rgba(170,63,50,.11); --orange-soft:rgba(25,122,168,.11); --blue-muted:rgba(170,63,50,.27); --orange-muted:rgba(25,122,168,.27); }
+    :root[data-theme="light"][data-accent="forest"] { --blue:#126a65; --orange:#9a661d; --blue-soft:rgba(18,106,101,.10); --orange-soft:rgba(154,102,29,.11); --blue-muted:rgba(18,106,101,.25); --orange-muted:rgba(154,102,29,.27); }
+    :root[data-theme="light"][data-accent="sea"] { --blue:#2f54c7; --orange:#a94e32; --blue-soft:rgba(47,84,199,.11); --orange-soft:rgba(169,78,50,.11); --blue-muted:rgba(47,84,199,.27); --orange-muted:rgba(169,78,50,.27); }
+    :root[data-theme="light"][data-accent="lavender"] { --blue:#7654ad; --orange:#167a65; --blue-soft:rgba(118,84,173,.10); --orange-soft:rgba(22,122,101,.10); --blue-muted:rgba(118,84,173,.25); --orange-muted:rgba(22,122,101,.25); }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--text);
+      background: var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      font-variant-numeric: tabular-nums;
+    }
+    /* 低对比环境光固定在视口，避免纯色背景显得扁平 */
+    body::before, body::after {
+      content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+    }
+    body::before {
+      background:
+        radial-gradient(120% 90% at 8% 0%, var(--aurora-1), transparent 46%),
+        radial-gradient(110% 80% at 100% 8%, var(--aurora-2), transparent 50%),
+        radial-gradient(130% 100% at 82% 100%, var(--aurora-3), transparent 55%),
+        radial-gradient(100% 90% at 0% 100%, var(--aurora-4), transparent 52%);
+      filter: saturate(.96);
+    }
+    /* 轻微噪点只用于抑制大面积纯色带感 */
+    body::after {
+      z-index: -1; opacity: var(--grain-opacity); mix-blend-mode: overlay;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size: 140px 140px;
+    }
+    button { font: inherit; }
+    button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .shell { max-width: 1480px; margin: 0 auto; padding: 0 28px 42px; }
+    .topbar {
+      min-height: 70px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 22px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .mark {
+      width: 42px; height: 42px; flex: none; overflow: hidden;
+      border: 1px solid var(--line); border-radius: 10px;
+      background: var(--panel-2); box-shadow: 0 8px 24px rgba(0,0,0,.12);
+    }
+    .mark img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .brand-name { font-weight: 760; letter-spacing: -.025em; }
+    .brand-sub { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .top-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+    .top-meta { display: flex; align-items: center; justify-content: flex-end; gap: 14px; color: var(--muted); font-size: 12px; }
+    .controls { display: flex; align-items: center; gap: 7px; }
+    .segmented {
+      position: relative; isolation: isolate; width: 94px; height: 34px; padding: 3px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr));
+      border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); box-shadow: inset 0 1px 4px rgba(0,0,0,.12);
+    }
+    .segmented::before {
+      content: ""; position: absolute; z-index: 0; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 2); border-radius: 5px;
+      background: var(--panel); border: 1px solid var(--line-soft); box-shadow: 0 2px 7px rgba(0,0,0,.2), inset 0 1px 0 var(--glass-highlight);
+      transform: translateX(0); transition: transform .28s cubic-bezier(.22,1,.36,1);
+    }
+    .segmented[data-active="en"]::before { transform: translateX(100%); }
+    .segmented button {
+      position: relative; z-index: 1; min-width: 0; height: 26px; padding: 0 7px; border: 0; border-radius: 5px;
+      color: var(--muted); background: transparent; cursor: pointer; font-size: 11px; font-weight: 650; transition: color .22s ease;
+    }
+    .segmented button.active { color: var(--text); }
+    .accent-button {
+      position: relative; isolation: isolate; width: 34px; height: 34px; padding: 0; display: grid; place-items: center;
+      border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--panel-2); cursor: pointer;
+      transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+    }
+    .accent-button:hover { border-color: var(--blue); box-shadow: 0 7px 18px rgba(0,0,0,.18); }
+    .accent-button:active { transform: scale(.96); }
+    .accent-button:focus-visible, .mode-toggle input:focus-visible ~ .mode-toggle-button { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .accent-swatch { width: 15px; height: 15px; border-radius: 50%; background: conic-gradient(var(--blue) 0 50%, var(--orange) 50% 100%); box-shadow: inset 0 0 0 2px rgba(255,255,255,.24), 0 1px 5px rgba(0,0,0,.28); }
+    .accent-button::before, .accent-button::after {
+      position: absolute; content: ""; width: 150%; left: 50%; height: 100%; transform: translateX(-50%); z-index: -1; background-repeat: no-repeat; pointer-events: none;
+    }
+    .accent-button:hover::before, .accent-button.is-burst::before {
+      top: -70%;
+      background-image: radial-gradient(circle,var(--accent-bubble) 20%,transparent 21%),radial-gradient(circle,transparent 20%,var(--accent-bubble-2) 21%,transparent 31%),radial-gradient(circle,var(--accent-bubble) 20%,transparent 21%),radial-gradient(circle,var(--accent-bubble-2) 20%,transparent 21%),radial-gradient(circle,transparent 10%,var(--accent-bubble) 15%,transparent 21%),radial-gradient(circle,var(--accent-bubble-2) 20%,transparent 21%),radial-gradient(circle,var(--accent-bubble) 20%,transparent 21%);
+      background-size: 10% 10%,20% 20%,15% 15%,20% 20%,18% 18%,10% 10%,15% 15%; background-position: 50% 120%; animation: accent-top-bubbles .6s ease;
+    }
+    .accent-button:hover::after, .accent-button.is-burst::after {
+      bottom: -70%;
+      background-image: radial-gradient(circle,var(--accent-bubble) 20%,transparent 21%),radial-gradient(circle,var(--accent-bubble-2) 20%,transparent 21%),radial-gradient(circle,transparent 10%,var(--accent-bubble) 15%,transparent 21%),radial-gradient(circle,var(--accent-bubble-2) 20%,transparent 21%),radial-gradient(circle,var(--accent-bubble) 20%,transparent 21%),radial-gradient(circle,var(--accent-bubble-2) 20%,transparent 21%);
+      background-size: 15% 15%,20% 20%,18% 18%,20% 20%,15% 15%,20% 20%; background-position: 50% 0; animation: accent-bottom-bubbles .6s ease;
+    }
+    .mode-toggle { position: relative; width: 36px; height: 36px; display: inline-block; flex: none; cursor: pointer; }
+    .mode-toggle::before { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--toggle-face); opacity: .28; box-shadow: 0 0 12px var(--blue-soft); }
+    .mode-toggle input { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+    .mode-toggle-button {
+      position: absolute; inset: 3px; display: block; border: 1px solid var(--line); border-radius: 50%; background: var(--toggle-face);
+      box-shadow: 0 8px 13px -6px rgba(0,0,0,.6), inset 0 -3px 5px -1px rgba(0,0,0,.28), 0 -4px 8px -4px rgba(255,255,255,.48), inset 0 3px 5px -2px rgba(255,255,255,.34), inset 0 0 4px rgba(255,255,255,.34);
+      transition: transform .3s cubic-bezier(.23,1,.32,1), box-shadow .3s ease, filter .3s ease;
+    }
+    .mode-toggle-label { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; color: var(--toggle-ink); font-size: 17px; font-weight: 700; line-height: 1; transition: color .3s ease, transform .3s ease; }
+    .mode-toggle input:active ~ .mode-toggle-button { transform: scale(.92); filter: blur(.35px); box-shadow: 0 4px 9px -5px rgba(0,0,0,.55), inset 0 -5px 10px rgba(255,255,255,.24), inset 0 5px 10px rgba(0,0,0,.34); }
+    .mode-toggle input:active ~ .mode-toggle-label { transform: scale(.9); color: var(--muted); }
+    .mode-toggle input:checked ~ .mode-toggle-button { box-shadow: 0 5px 11px -5px rgba(0,0,0,.6), inset 0 -5px 11px rgba(255,255,255,.22), inset 0 5px 10px rgba(0,0,0,.3), 0 0 12px var(--blue-soft); }
+    @keyframes accent-top-bubbles {
+      0% { background-position: 5% 90%,10% 90%,18% 90%,32% 90%,48% 90%,68% 90%,88% 90%; }
+      50% { background-position: 0 70%,5% 20%,22% 36%,38% 0,55% 28%,72% 42%,95% 20%; }
+      100% { background-position: 0 58%,5% 8%,22% 24%,38% -10%,55% 16%,72% 30%,95% 8%; background-size: 0 0,0 0,0 0,0 0,0 0,0 0,0 0; }
+    }
+    @keyframes accent-bottom-bubbles {
+      0% { background-position: 10% -10%,28% 0,46% -10%,64% -10%,82% -10%,96% 0; }
+      50% { background-position: 0 75%,18% 80%,42% 58%,60% 100%,78% 72%,100% 55%; }
+      100% { background-position: 0 88%,18% 92%,42% 70%,60% 110%,78% 84%,108% 68%; background-size: 0 0,0 0,0 0,0 0,0 0,0 0; }
+    }
+    .status { display: inline-flex; align-items: center; gap: 7px; color: var(--status-text); }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(85,214,158,.1); }
+    .hero { padding: 34px 0 24px; display: flex; justify-content: space-between; align-items: end; gap: 24px; }
+    h1 { margin: 0; font-size: clamp(26px, 3vw, 38px); line-height: 1.08; letter-spacing: -.045em; }
+    .lede { margin: 10px 0 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .range-chip { min-height: 42px; flex: none; display: inline-flex; align-items: center; padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px; background: var(--chip-bg); color: var(--chip-text); font-size: 14px; white-space: nowrap; }
+    .report-context { max-width: 70%; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+    .timezone-chip { min-height: 42px; max-width: min(100%, 340px); display: inline-flex; align-items: center; padding: 10px 14px; border: 1px solid var(--line-soft); border-radius: 8px; color: var(--muted); background: var(--chip-bg); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; cursor: help; }
+    /* 默认显示图标+文字；悬停时文字向右滑出消失，图标放大居中 */
+    .download-link {
+      position: relative;
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 42px; padding: 10px 15px 10px 39px;
+      background: #010101; color: #fff;
+      border: 1px solid rgba(255,255,255,.07); border-radius: 12px;
+      font-family: inherit; font-size: 13px; font-weight: 650;
+      text-decoration: none; white-space: nowrap; overflow: hidden;
+      box-shadow: 0 12px 26px -12px rgba(0,0,0,.72);
+      transition: box-shadow .2s, filter .2s, transform .12s;
+    }
+    .download-link .svg-wrapper {
+      position: absolute; top: 50%; left: 13px;
+      width: 18px; height: 18px;
+      display: flex; align-items: center; justify-content: center;
+      transform: translateY(-50%);
+      transition: left .3s ease-in-out, transform .3s ease-in-out;
+    }
+    .download-link svg { display: block; width: 18px; height: 18px; color: #ec6336; transform-origin: center; transition: transform .3s ease-in-out; }
+    .download-link span:not(.svg-wrapper) { display: block; transition: transform .3s ease-in-out, opacity .25s ease-in-out; }
+    .download-link:hover { text-decoration: none; box-shadow: 0 16px 30px -13px rgba(0,0,0,.82); filter: brightness(1.08); }
+    /* 悬停：图标居中放大、不旋转，文字向右滑走并淡出 */
+    .download-link:hover .svg-wrapper { left: 50%; transform: translate(-50%, -50%); }
+    .download-link:hover svg { transform: scale(1.5); }
+    .download-link:hover span:not(.svg-wrapper) { transform: translateX(calc(100% + 15px)); opacity: 0; }
+    .download-link:active { transform: scale(.96); }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
+    .card, .panel {
+      position: relative; isolation: isolate;
+      background: linear-gradient(150deg, var(--surface-shine), transparent 46%), var(--glass-panel);
+      border: 1px solid var(--glass-border);
+      box-shadow: inset 0 1px 0 var(--glass-highlight), inset 0 0 0 1px rgba(255,255,255,.02), var(--shadow);
+      backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+    }
+    /* 顶部细腻光泽，模拟磨砂玻璃迎光的一条高光带 */
+    .card::before, .panel::before {
+      content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+      background: linear-gradient(180deg, var(--glass-sheen), transparent 34%);
+    }
+    .card { min-height: 140px; padding: 19px 20px; border-radius: 16px; position: relative; overflow: hidden; container-type: inline-size; transition: box-shadow .22s ease, border-color .22s ease; }
+    /* 卡片内一大团柔光铺满整张卡，用 --glow 上色，持续不规律地缓慢游走 */
+    /* 辉光层向卡片外扩出透明缓冲区，动画位移时边界始终落在透明区域，不会露出裁切硬边 */
+    .card::after {
+      content: ""; position: absolute; z-index: -1; inset: -28%; border-radius: inherit;
+      background: radial-gradient(60% 64% at 62% 38%, var(--glow, transparent) 0%, color-mix(in srgb, var(--glow, transparent) 54%, transparent) 36%, transparent 72%);
+      pointer-events: none; will-change: transform, opacity;
+      animation: glow-wander 14s ease-in-out infinite;
+    }
+    /* 四张卡各错开相位与时长，晃动看起来互不同步、无规律 */
+    .cards .card:nth-child(1)::after { animation-duration: 13s; animation-delay: -2s; }
+    .cards .card:nth-child(2)::after { animation-duration: 17s; animation-delay: -7s; }
+    .cards .card:nth-child(3)::after { animation-duration: 15s; animation-delay: -4s; }
+    .cards .card:nth-child(4)::after { animation-duration: 19s; animation-delay: -11s; }
+    .card:hover { border-color: var(--glass-border-strong, var(--glass-border)); box-shadow: inset 0 1px 0 var(--glass-highlight), 0 20px 44px rgba(0,0,0,.26); }
+    @keyframes glow-wander {
+      0%   { transform: translate(0, 0) scale(1); opacity: .85; }
+      18%  { transform: translate(-7%, 5%) scale(1.05); opacity: 1; }
+      37%  { transform: translate(4%, 9%) scale(.97); opacity: .78; }
+      55%  { transform: translate(-9%, 3%) scale(1.07); opacity: .95; }
+      72%  { transform: translate(3%, -4%) scale(1.01); opacity: .82; }
+      88%  { transform: translate(-4%, 7%) scale(1.04); opacity: .92; }
+      100% { transform: translate(0, 0) scale(1); opacity: .85; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .card::after { animation: none; }
+    }
+    .card-label { color: var(--muted); font-size: 12px; font-weight: 560; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .rate-card .card-label > :first-child { min-width: 0; line-height: 1.35; overflow-wrap: anywhere; }
+    .rate-card .card-label > :last-child { flex: none; white-space: nowrap; }
+    .card-value { margin-top: 15px; font-size: clamp(25px, 2.5vw, 34px); font-weight: 730; letter-spacing: -.045em; white-space: nowrap; background: linear-gradient(180deg, var(--text), color-mix(in srgb, var(--text) 74%, transparent)); -webkit-background-clip: text; background-clip: text; }
+    .card-foot { margin-top: 10px; color: var(--muted-2); font-size: 11px; }
+    .card-foot i { font-style: normal; }
+    .pair { display: flex; gap: 14px; align-items: baseline; }
+    .pair span { font-size: 12px; color: var(--muted); }
+    .rate-grid { margin-top: 15px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
+    .rate-metric { min-width: 0; padding-right: 2px; }
+    .rate-metric + .rate-metric { padding-left: 6px; padding-right: 0; border-left: 1px solid var(--line); }
+    .rate-direction { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+    .rate-direction::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--metric-color); }
+    .rate-number { display: block; margin-top: 7px; color: var(--metric-color); font-size: clamp(16px, 1.4vw, 25px); font-size: clamp(16px, 10cqw, 26px); font-weight: 720; line-height: 1.12; letter-spacing: -.045em; white-space: nowrap; }
+    .up { color: var(--orange); }
+    .down { color: var(--blue); }
+    .grid { margin-top: 12px; display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(300px, .8fr); gap: 12px; }
+    .panel { border-radius: var(--radius); min-width: 0; }
+    .panel-head { padding: 18px 20px 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+    .panel-title { font-size: 14px; font-weight: 690; letter-spacing: -.015em; }
+    .panel-sub { margin-top: 5px; color: var(--muted); font-size: 11px; }
+    .bandwidth-note { max-width: 560px; margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+    .bandwidth-context { margin: 6px 0 0; color: var(--orange); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+    .legend { display: flex; flex-wrap: wrap; gap: 13px; color: var(--muted); font-size: 11px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .legend-item::before { content: ""; width: 16px; height: 2px; border-radius: 3px; background: var(--legend); }
+    .chart-wrap { position: relative; height: 340px; padding: 12px 12px 10px 8px; }
+    .query-area { padding: 14px 20px 0; }
+    .query-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .time-tabs { max-width: 100%; display: flex; align-items: center; min-height: 34px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); overflow-x: auto; scrollbar-width: none; }
+    .time-tabs::-webkit-scrollbar { display: none; }
+    .time-tabs button { min-width: 58px; height: 27px; flex: none; padding: 0 10px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; cursor: pointer; font-size: 11px; font-weight: 650; }
+    .time-tabs button.active { color: var(--text); background: var(--panel); box-shadow: 0 1px 5px rgba(0,0,0,.12); }
+    .query-summary { min-width: 0; color: var(--muted); font-size: 11px; text-align: right; overflow-wrap: anywhere; }
+    .custom-range { max-height: 0; opacity: 0; visibility: hidden; pointer-events: none; overflow: hidden; transition: max-height .22s ease, opacity .16s ease, margin .22s ease, visibility 0s linear .22s; }
+    .custom-range.open { max-height: 110px; margin-top: 10px; opacity: 1; visibility: visible; pointer-events: auto; transition: max-height .22s ease, opacity .2s ease, margin .22s ease; }
+    .custom-range-inner { display: flex; align-items: end; gap: 9px; flex-wrap: wrap; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+    .date-field { display: grid; gap: 5px; min-width: 205px; color: var(--muted); font-size: 10px; }
+    .date-field input { width: 100%; height: 34px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel); font: inherit; font-size: 11px; }
+    .command-button { height: 34px; padding: 0 13px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel); cursor: pointer; font-size: 11px; font-weight: 650; }
+    .command-button.primary { border-color: var(--action); color: #fff; background: var(--action); }
+    .query-error { align-self: center; color: var(--red); font-size: 10px; }
+    canvas { width: 100%; height: 100%; display: block; }
+    .tooltip {
+      position: absolute; z-index: 3; pointer-events: none; min-width: 180px; padding: 10px 11px;
+      border: 1px solid var(--tooltip-border); border-radius: 10px; background: var(--tooltip-bg); box-shadow: 0 12px 30px rgba(0,0,0,.18);
+      opacity: 0; visibility: hidden; transform: translate(-50%, calc(-100% - 1px)) scale(.98); transition: opacity .16s ease, transform .16s ease, visibility 0s linear .16s; font-size: 11px; will-change: left, top, opacity, transform;
+    }
+    .tooltip.visible { opacity: 1; visibility: visible; transform: translate(-50%, calc(-100% - 9px)) scale(1); transition: opacity .16s ease, transform .16s ease; }
+    .tooltip-time { color: var(--quiet-strong); margin-bottom: 7px; }
+    .tooltip-row { display: flex; justify-content: space-between; gap: 18px; line-height: 1.7; color: var(--muted); }
+    .tooltip-row strong { color: var(--text); font-weight: 600; }
+    .side-stack { display: grid; gap: 12px; }
+    .breakdown { padding: 20px; }
+    .donut-row { margin-top: 24px; display: flex; align-items: center; gap: 24px; }
+    .donut { --ring-out:var(--orange); --ring-in:var(--blue); width: 142px; aspect-ratio: 1; flex: none; border: 0; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--ring-out) 0 var(--split), var(--ring-in) var(--split) 100%); position: relative; cursor: crosshair; transition: transform .2s ease, filter .2s ease, box-shadow .2s ease; animation: donut-ignite .95s cubic-bezier(.16,.8,.2,1) backwards; }
+    .donut:hover, .donut:focus-visible { transform: scale(1.025); filter: saturate(1.08); box-shadow: 0 10px 25px rgba(0,0,0,.16); outline: none; }
+    .donut.is-focus-egress { --ring-in:var(--blue-muted); }
+    .donut.is-focus-ingress { --ring-out:var(--orange-muted); }
+    .donut.is-focus-udp { --ring-out:var(--orange-muted); --ring-in:var(--blue-muted); box-shadow: 0 0 0 3px rgba(125,139,153,.25); }
+    .donut::before { content: ""; position: absolute; inset: 17px; z-index: 1; border-radius: 50%; background: var(--glass-panel); box-shadow: inset 0 0 0 1px var(--line), 0 0 20px var(--blue-soft); backdrop-filter: blur(10px); }
+    .donut::after { content: ""; position: absolute; inset: 31%; z-index: 2; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--text) 48%, transparent) 0, var(--blue-muted) 30%, transparent 72%); filter: blur(9px); opacity: 0; pointer-events: none; animation: donut-core-light .8s cubic-bezier(.16,.8,.2,1) forwards; }
+    .donut-center { position: relative; z-index: 3; text-align: center; }
+    .donut-center strong { --donut-value-size:21px; display: block; font-size: var(--donut-value-size); line-height: 1; letter-spacing: -.04em; white-space: nowrap; transition: font-size .16s ease, opacity .16s ease, transform .16s ease; }
+    .donut-center span { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .donut-center em { position: absolute; left: 50%; top: 100%; width: max-content; max-width: 96px; margin-top: 2px; color: var(--muted-2); font-size: 9px; font-style: normal; opacity: 0; transform: translate(-50%, -2px); transition: opacity .16s ease, transform .16s ease; pointer-events: none; }
+    .donut.is-detail .donut-center em { opacity: 1; transform: translate(-50%, 0); }
+    .donut-center strong.value-pop { animation: value-pop .2s ease; }
+    .break-list { min-width: 0; flex: 1; display: grid; gap: 13px; }
+    .break-row { display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 8px; padding: 6px 8px; margin: -6px -8px; border-radius: 6px; color: var(--muted); font-size: 11px; cursor: pointer; transition: background .16s ease, color .16s ease, transform .16s ease; }
+    .break-row:hover, .break-row:focus-visible, .break-row.is-active { color: var(--text); background: var(--chip-bg); transform: translateX(2px); outline: none; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dot); }
+    .break-row strong { color: var(--quiet-strong); font-weight: 600; }
+    @keyframes donut-ignite {
+      0% { opacity: 0; transform: scale(.82); filter: brightness(1.35); }
+      42% { opacity: .9; transform: scale(.96); filter: brightness(1.12); }
+      100% { opacity: 1; transform: scale(1); filter: brightness(1); }
+    }
+    @keyframes donut-core-light {
+      0% { opacity: 0; transform: scale(.2); }
+      34% { opacity: .6; transform: scale(1.05); }
+      100% { opacity: 0; transform: scale(1.5); }
+    }
+    @keyframes value-pop { 0% { opacity: .35; transform: translateY(3px) scale(.96); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+    .compression { padding: 20px; }
+    .saving { margin-top: 20px; display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; }
+    .saving strong { font-size: 30px; letter-spacing: -.045em; color: var(--green); }
+    .saving span { color: var(--muted); font-size: 11px; }
+    .meter { margin-top: 15px; height: 8px; border-radius: 999px; background: var(--meter-bg); overflow: hidden; }
+    .meter > span { display: block; height: 100%; width: var(--width); border-radius: inherit; background: linear-gradient(90deg, color-mix(in srgb, var(--green) 78%, var(--panel)), var(--green)); }
+    .metric-line { margin-top: 12px; display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
+    .lower { margin-top: 12px; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; }
+    .daily-wrap { position: relative; height: 270px; padding: 10px 12px 12px 8px; }
+    .stats { padding: 20px; }
+    .stat-grid { margin-top: 18px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .stat { padding: 15px; background: var(--panel-2); }
+    .stat { min-height: 82px; }
+    .stat span { display: block; min-height: 30px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .stat strong { display: block; margin-top: 8px; font-size: 17px; font-weight: 650; line-height: 1.35; letter-spacing: -.025em; overflow-wrap: anywhere; }
+    .table-panel { margin-top: 12px; overflow: hidden; }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 780px; }
+    th { padding: 13px 20px; color: var(--muted-2); font-size: 10px; font-weight: 600; letter-spacing: .055em; text-transform: uppercase; text-align: left; border-bottom: 1px solid var(--line); }
+    td { padding: 15px 20px; color: var(--table-text); font-size: 11px; border-bottom: 1px solid var(--line-soft); }
+    tr:last-child td { border-bottom: 0; }
+    .run-state { display: inline-flex; align-items: center; gap: 6px; }
+    .run-state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--state, var(--green)); }
+    .empty { display: grid; place-items: center; height: 100%; color: var(--muted-2); font-size: 12px; }
+    @media (max-width: 1040px) {
+      .cards { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .grid, .lower { grid-template-columns: 1fr; }
+      .side-stack { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    }
+    @media (max-width: 680px) {
+      .shell { padding: 0 14px 28px; }
+      .topbar { align-items: flex-start; padding: 16px 0; }
+      .top-actions { gap: 8px; }
+      .top-meta { display: none; }
+      .hero { align-items: flex-start; flex-direction: column; padding-top: 26px; }
+      .report-context { width: 100%; max-width: none; justify-content: flex-start; }
+      .cards { grid-template-columns: 1fr; }
+      .side-stack { grid-template-columns: 1fr; }
+      .chart-wrap { height: 285px; }
+      .donut-row { gap: 16px; }
+      .donut { width: 122px; }
+      .panel-head { flex-direction: column; }
+      .query-summary { width: 100%; text-align: left; }
+      .date-field { min-width: min(100%, 240px); flex: 1; }
+    }
+    @media (max-width: 520px) {
+      .topbar { flex-wrap: wrap; gap: 10px; }
+      .top-actions { width: 100%; justify-content: flex-end; }
+      .brand-sub { display: none; }
+    }
+    @media print {
+      body { background: #fff; color: #111; }
+      .shell { max-width: none; padding: 0; }
+      .card, .panel { box-shadow: none; break-inside: avoid; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark"><img src="data:image/png;base64,/*__ZSTDNET_LOGO__*/" alt="ZstdNet"></div>
+        <div>
+          <div class="brand-name">ZstdNet Analytics</div>
+          <div class="brand-sub" id="serverIdentity">本地流量统计报告</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <div class="top-meta">
+          <span class="status" id="sessionState">运行中</span>
+          <span id="generatedAt"></span>
+        </div>
+        <div class="controls">
+          <div class="segmented" id="languageControl" data-active="zh" role="group" aria-label="语言 / Language">
+            <button type="button" data-lang="zh" class="active" aria-pressed="true">中文</button>
+            <button type="button" data-lang="en" aria-pressed="false">EN</button>
+          </div>
+          <button type="button" class="accent-button" id="accentToggle" aria-label="切换主题色" title="切换主题色"><span class="accent-swatch" aria-hidden="true"></span></button>
+          <label class="mode-toggle" id="themeControl" title="切换到浅色主题">
+            <input type="checkbox" id="themeToggle" role="switch" aria-label="切换到浅色主题">
+            <span class="mode-toggle-button" aria-hidden="true"></span>
+            <span class="mode-toggle-label" id="themeIcon" aria-hidden="true">☾</span>
+          </label>
+        </div>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <h1 id="heroTitle">服务器流量概览</h1>
+        <p class="lede" id="heroLede">服务器网络的公网应用层流量。</p>
+      </div>
+      <div class="report-context">
+        <div class="range-chip" id="rangeChip">统计范围</div>
+        <div class="timezone-chip" id="serverTimezone">服务器时区：UTC</div>
+        <a class="download-link" href="https://www.curseforge.com/minecraft/mc-mods/zstdnet" target="_blank" rel="noopener noreferrer"><span class="svg-wrapper"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M18.326 9.2145S23.2261 8.4418 24 6.1882h-7.5066V4.4H0l2.0318 2.3576V9.173s5.1267-.2665 7.1098 1.2372c2.7146 2.516-3.053 5.917-3.053 5.917L5.0995 19.6c1.5465-1.4726 4.494-3.3775 9.8983-3.2857-2.0565.65-4.1245 1.6651-5.7344 3.2857h10.9248l-1.0288-3.2726s-7.918-4.6688-.8336-7.1127z"/></svg></span><span id="zstdnetDownload">下载 ZstdNet</span></a>
+      </div>
+    </section>
+
+    <section class="cards">
+      <article class="card" style="--glow:var(--glow-blue)">
+        <div class="card-label"><span id="todayLabel">今日总流量</span><span id="todayDuration"></span></div>
+        <div class="card-value" id="todayTotal">—</div>
+        <div class="card-foot pair"><span><i id="todayInLabel">入</i> <b class="down" id="todayIn">—</b></span><span><i id="todayOutLabel">出</i> <b class="up" id="todayOut">—</b></span></div>
+      </article>
+      <article class="card" style="--glow:var(--glow-orange)">
+        <div class="card-label"><span id="sessionLabel">本次运行流量</span><span id="sessionDuration"></span></div>
+        <div class="card-value" id="sessionTotal">—</div>
+        <div class="card-foot pair"><span><i id="sessionInLabel">入</i> <b class="down" id="sessionIn">—</b></span><span><i id="sessionOutLabel">出</i> <b class="up" id="sessionOut">—</b></span></div>
+      </article>
+      <article class="card rate-card" style="--glow:var(--glow-violet)">
+        <div class="card-label"><span id="averageLabel">当前查询平均速率</span><span id="serverViewLabel">服务器网络</span></div>
+        <div class="rate-grid">
+          <div class="rate-metric" style="--metric-color:var(--blue)"><span class="rate-direction" id="avgInLabel">平均入站</span><strong class="rate-number" id="avgIn">—</strong></div>
+          <div class="rate-metric" style="--metric-color:var(--orange)"><span class="rate-direction" id="avgOutLabel">平均出站</span><strong class="rate-number" id="avgOut">—</strong></div>
+        </div>
+      </article>
+      <article class="card" style="--glow:var(--glow-green)">
+        <div class="card-label"><span id="savedLabel">压缩节省</span><span id="compressionRatio">—</span></div>
+        <div class="card-value" id="savedBytes">—</div>
+        <div class="card-foot" id="savedHint">TCP 原始数据与线路数据之差</div>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <div class="panel-head">
+          <div><div class="panel-title" id="trendTitle">上下行速率趋势</div><div class="panel-sub" id="seriesSubtitle">聚合时间序列</div></div>
+          <div class="legend"><span class="legend-item" id="legendIn" style="--legend:var(--blue)">入站</span><span class="legend-item" id="legendOut" style="--legend:var(--orange)">出站</span></div>
+        </div>
+        <div class="query-area">
+          <div class="query-toolbar">
+            <div class="time-tabs" id="timeTabs" role="group" aria-label="时间范围 / Time range">
+              <button type="button" class="active" data-window="all" id="rangeAllButton">全部</button>
+              <button type="button" data-window="1h" id="range1hButton">1 小时</button>
+              <button type="button" data-window="6h" id="range6hButton">6 小时</button>
+              <button type="button" data-window="12h" id="range12hButton">12 小时</button>
+              <button type="button" data-window="1d" id="range1dButton" hidden>1 天</button>
+              <button type="button" data-window="7d" id="range7dButton" hidden>7 天</button>
+              <button type="button" data-window="custom" id="rangeCustomButton">自定义</button>
+            </div>
+            <div class="query-summary" id="querySummary"></div>
+          </div>
+          <div class="custom-range" id="customRangePanel" aria-hidden="true">
+            <div class="custom-range-inner">
+              <label class="date-field"><span id="customStartLabel">开始时间</span><input type="datetime-local" id="customStart"></label>
+              <label class="date-field"><span id="customEndLabel">结束时间</span><input type="datetime-local" id="customEnd"></label>
+              <button type="button" class="command-button primary" id="applyCustomRange">查询</button>
+              <button type="button" class="command-button" id="resetCustomRange">重置</button>
+              <span class="query-error" id="queryError" role="status"></span>
+            </div>
+          </div>
+        </div>
+        <div class="chart-wrap" id="trafficChartWrap"><canvas id="trafficChart"></canvas><div class="tooltip" id="trafficTooltip"></div></div>
+      </article>
+
+      <div class="side-stack">
+        <article class="panel breakdown">
+          <div class="panel-title" id="directionTitle">线路方向构成</div>
+          <div class="panel-sub" id="directionSubtitle">所选范围内的公网字节</div>
+          <div class="donut-row">
+            <div class="donut" id="directionDonut" tabindex="0" role="img" aria-label="总线路流量"><div class="donut-center"><strong id="wireTotal">—</strong><span id="wireTotalLabel">总线路流量</span><em id="directionShare"></em></div></div>
+            <div class="break-list">
+              <div class="break-row" data-direction="egress" tabindex="0"><i class="dot" style="--dot:var(--orange)"></i><span id="wireOutLabel">出站</span><strong id="wireOut">—</strong></div>
+              <div class="break-row" data-direction="ingress" tabindex="0"><i class="dot" style="--dot:var(--blue)"></i><span id="wireInLabel">入站</span><strong id="wireIn">—</strong></div>
+              <div class="break-row" data-direction="udp" tabindex="0"><i class="dot" style="--dot:#707b87"></i><span id="udpShareLabel">UDP 占比</span><strong id="udpShare">—</strong></div>
+            </div>
+          </div>
+        </article>
+        <article class="panel compression">
+          <div class="panel-title" id="compressionTitle">TCP 压缩效率</div>
+          <div class="panel-sub" id="compressionSubtitle">原始 Minecraft 数据与公网 TCP 线路字节</div>
+          <div class="saving"><div><strong id="savingPercent">—</strong><span id="savingRatioLabel"> 节省比例</span></div><span id="rawVsWire">—</span></div>
+          <div class="meter"><span id="savingMeter"></span></div>
+          <div class="metric-line"><span id="wireRawLabel">线路 / 原始</span><strong id="wireRawPercent">—</strong></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="lower">
+      <article class="panel">
+        <div class="panel-head"><div><div class="panel-title" id="dailyTitle">每日线路流量</div><div class="panel-sub" id="dailySubtitle">入站与出站堆叠对比</div></div></div>
+        <div class="daily-wrap" id="dailyChartWrap"><canvas id="dailyChart"></canvas><div class="tooltip" id="dailyTooltip"></div></div>
+      </article>
+      <article class="panel stats">
+        <div class="panel-title" id="bandwidthTitle">带宽使用参考</div>
+        <p class="bandwidth-note" id="rateExplanation"></p>
+        <p class="bandwidth-context" id="bandwidthContext"></p>
+        <div class="stat-grid">
+          <div class="stat" id="p95InStat"><span id="p95InLabel">95% 时间内，入站不超过</span><strong class="down" id="p95In">—</strong></div>
+          <div class="stat" id="p95OutStat"><span id="p95OutLabel">95% 时间内，出站不超过</span><strong class="up" id="p95Out">—</strong></div>
+          <div class="stat" id="p99InStat"><span id="p99InLabel">99% 时间内，入站不超过</span><strong class="down" id="p99In">—</strong></div>
+          <div class="stat" id="p99OutStat"><span id="p99OutLabel">99% 时间内，出站不超过</span><strong class="up" id="p99Out">—</strong></div>
+          <div class="stat"><span id="peakInLabel">最高入站速率</span><strong class="down" id="peakIn">—</strong></div>
+          <div class="stat"><span id="peakOutLabel">最高出站速率</span><strong class="up" id="peakOut">—</strong></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="panel-head"><div><div class="panel-title" id="runsTitle">服务器运行记录</div><div class="panel-sub" id="runsSubtitle">最近 50 次，当前运行会显示在首行</div></div></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th id="runStateHeader">状态</th><th id="runStartHeader">开始时间</th><th id="runDurationHeader">持续时间</th><th id="runTrafficHeader">总流量</th><th id="runAvgInHeader">平均入站</th><th id="runAvgOutHeader">平均出站</th><th id="runSavedHeader">压缩节省</th></tr></thead>
+          <tbody id="runsBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script id="report-data" type="application/json">/*__ZSTDNET_REPORT_JSON__*/</script>
+  <script>
+    (() => {
+      'use strict';
+      const report = JSON.parse(document.getElementById('report-data').textContent);
+      const $ = id => document.getElementById(id);
+      const translations = {
+        zh: {
+          pageTitle:'ZstdNet 流量统计', defaultIdentity:'本地流量统计报告', running:'运行中', ended:'已结束', generated:'生成于', timezoneLabel:'服务器时区：',
+          timezoneHelp:'图表日期、过去 1 小时和自定义起止时间均按该服务器时区解释。',
+          heroTitle:'服务器流量概览', heroLede:'服务器网络的公网应用层流量。',
+          todayLabel:'今日总流量', sessionLabel:'本次运行流量', averageLabel:'当前查询平均速率', serverViewLabel:'服务器网络', downloadLabel:'下载 ZstdNet',
+          avgInLabel:'平均入站', avgOutLabel:'平均出站', savedLabel:'压缩节省', savedHint:'TCP 原始数据与线路数据之差', shortIn:'入', shortOut:'出',
+          trendTitle:'上下行速率趋势', directionTitle:'线路方向构成', directionSubtitle:'所选范围内的公网字节',
+          wireTotalLabel:'总线路流量', wireOutLabel:'出站', wireInLabel:'入站', udpShareLabel:'UDP 占比',
+          directionEgressLabel:'出站流量', directionIngressLabel:'入站流量', directionUdpLabel:'UDP 流量',
+          compressionTitle:'TCP 压缩效率', compressionSubtitle:'原始 Minecraft 数据与公网 TCP 线路字节', savingRatioLabel:' 节省比例', wireRawLabel:'线路 / 原始',
+          dailyTitle:'每日线路流量', dailySubtitle:'入站与出站堆叠对比', bandwidthTitle:'带宽使用参考',
+          p95InLabel:'95% 时间内，入站不超过', p95OutLabel:'95% 时间内，出站不超过',
+          p99InLabel:'99% 时间内，入站不超过', p99OutLabel:'99% 时间内，出站不超过',
+          peakInLabel:'最高入站速率', peakOutLabel:'最高出站速率',
+          p95Help:'把各时间段按速率从低到高排列，95% 的时间段不超过这个值；偶发高峰可能更高。',
+          p99Help:'把各时间段按速率从低到高排列，99% 的时间段不超过这个值；它更接近短时高峰。',
+          runsTitle:'服务器运行记录', runsSubtitle:'最近 50 次，当前运行会显示在首行',
+          runStateHeader:'状态', runStartHeader:'开始时间', runDurationHeader:'持续时间', runTrafficHeader:'总流量',
+          runAvgInHeader:'平均入站', runAvgOutHeader:'平均出站', runSavedHeader:'压缩节省',
+          stateRunning:'运行中', stateInterrupted:'异常结束', stateEnded:'已结束', noRuns:'暂无运行记录',
+          emptyTraffic:'当前范围还没有流量样本', emptyDaily:'暂无每日历史', tooltipIn:'入站', tooltipOut:'出站',
+          tooltipTotal:'总流量', tooltipAverage:'日均速率', rangeAll:'全部', range1h:'1 小时', range6h:'6 小时', range12h:'12 小时', range1d:'1 天', range7d:'7 天', rangeCustom:'自定义',
+          customStart:'开始时间', customEnd:'结束时间', queryAction:'查询', resetAction:'重置', invalidRange:'请选择报告范围内有效的起止时间',
+          themeToLight:'切换到浅色主题', themeToDark:'切换到深色主题',
+          accentStatus:(current, next) => `切换主题色（当前：${current}，下一套：${next}）`,
+          accentNames:{default:'默认','warm-sand':'暖砂',mono:'极简黑白',midnight:'暗夜',rose:'玫瑰花园',aurora:'湖光',sunset:'日落霞光',forest:'森林低语',sea:'海风',lavender:'薰衣草梦'},
+          series:(_points, connections) => `当前连接 ${connections}`,
+          querySummary:(start, end, _points, total) => `${start} – ${end} · 总流量 ${total}`,
+          rateExplanation:granularity => `当前查询内，速率是服务器网络公网应用层的平均字节/秒；每个趋势点表示 ${granularity} 平均。带宽参考同时换算为 Mbps（1 Mbps = 1,000,000 bit/s）。`,
+          shortSampleContext:points => `当前查询只有 ${points} 个时间点，95%、99% 和最高速率相同属于正常现象；扩大查询时间可获得更有区分度的参考。`,
+          fullSampleContext:'95% / 99% 分别表示只有 5% / 1% 的时间点会高于该速率。',
+          wireRaw:value => `线路/原始 ${value}`,
+          directionShare:value => `占比 ${value}`,
+          ranges:{today:'今日',session:'本次运行','24h':'最近 24 小时','7d':'最近 7 天','30d':'最近 30 天'},
+          modes:{dedicated:'专用服务器',lan:'局域网',inactive:'未运行',unknown:'未知模式'}
+        },
+        en: {
+          pageTitle:'ZstdNet Traffic Analytics', defaultIdentity:'Local traffic report', running:'Running', ended:'Ended', generated:'Generated', timezoneLabel:'Server time zone: ',
+          timezoneHelp:'Chart dates, the recent-hour filters, and custom start/end times are interpreted in this server time zone.',
+          heroTitle:'Server Traffic Overview', heroLede:'Public application traffic through the server network.',
+          todayLabel:'Traffic Today', sessionLabel:'Current Run Traffic', averageLabel:'Average Rate for This Query', serverViewLabel:'Server network', downloadLabel:'Get ZstdNet',
+          avgInLabel:'Average ingress', avgOutLabel:'Average egress', savedLabel:'Compression Savings', savedHint:'Difference between raw TCP data and public wire bytes', shortIn:'In', shortOut:'Out',
+          trendTitle:'Ingress and Egress Rate', directionTitle:'Traffic Direction Split', directionSubtitle:'Public wire bytes in the selected range',
+          wireTotalLabel:'Total wire traffic', wireOutLabel:'Egress', wireInLabel:'Ingress', udpShareLabel:'UDP share',
+          directionEgressLabel:'Egress traffic', directionIngressLabel:'Ingress traffic', directionUdpLabel:'UDP traffic',
+          compressionTitle:'TCP Compression Efficiency', compressionSubtitle:'Raw Minecraft data compared with public TCP wire bytes', savingRatioLabel:' saved', wireRawLabel:'Wire / Raw',
+          dailyTitle:'Daily Wire Traffic', dailySubtitle:'Stacked ingress and egress comparison', bandwidthTitle:'Bandwidth Planning Reference',
+          p95InLabel:'Ingress stayed below this 95% of the time', p95OutLabel:'Egress stayed below this 95% of the time',
+          p99InLabel:'Ingress stayed below this 99% of the time', p99OutLabel:'Egress stayed below this 99% of the time',
+          peakInLabel:'Highest ingress rate', peakOutLabel:'Highest egress rate',
+          p95Help:'Time buckets are sorted by rate. 95% of them are at or below this value; occasional bursts can be higher.',
+          p99Help:'Time buckets are sorted by rate. 99% of them are at or below this value, making this closer to short bursts.',
+          runsTitle:'Server Run History', runsSubtitle:'Latest 50 runs; the current run appears first',
+          runStateHeader:'Status', runStartHeader:'Started', runDurationHeader:'Duration', runTrafficHeader:'Traffic',
+          runAvgInHeader:'Avg. ingress', runAvgOutHeader:'Avg. egress', runSavedHeader:'Saved',
+          stateRunning:'Running', stateInterrupted:'Interrupted', stateEnded:'Ended', noRuns:'No run history yet',
+          emptyTraffic:'No traffic samples in this range', emptyDaily:'No daily history yet', tooltipIn:'Ingress', tooltipOut:'Egress',
+          tooltipTotal:'Total traffic', tooltipAverage:'Daily average', rangeAll:'All', range1h:'1 hour', range6h:'6 hours', range12h:'12 hours', range1d:'1 day', range7d:'7 days', rangeCustom:'Custom',
+          customStart:'Start time', customEnd:'End time', queryAction:'Apply', resetAction:'Reset', invalidRange:'Choose a valid start and end inside this report',
+          themeToLight:'Switch to light theme', themeToDark:'Switch to dark theme',
+          accentStatus:(current, next) => `Switch theme colors (current: ${current}; next: ${next})`,
+          accentNames:{default:'Default','warm-sand':'Warm Sand',mono:'Minimal Mono',midnight:'Midnight',rose:'Rose Garden',aurora:'Aurora',sunset:'Sunset Glow',forest:'Forest Whisper',sea:'Sea Breeze',lavender:'Lavender Dream'},
+          series:(_points, connections) => `${connections} active connections`,
+          querySummary:(start, end, _points, total) => `${start} – ${end} · ${total} total`,
+          rateExplanation:granularity => `For the current query, rate is the server network's average public application bytes per second; each trend point is a ${granularity} average. Bandwidth references also include Mbps (1 Mbps = 1,000,000 bit/s).`,
+          shortSampleContext:points => `This query has only ${points} time points, so P95, P99, and the peak can be identical. Widen the query for a more distinct reference.`,
+          fullSampleContext:'P95 / P99 mean that only 5% / 1% of time points are above that rate.',
+          wireRaw:value => `Wire/Raw ${value}`,
+          directionShare:value => `${value} of total`,
+          ranges:{today:'Today',session:'Current run','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'},
+          modes:{dedicated:'Dedicated server',lan:'LAN',inactive:'Inactive',unknown:'Unknown mode'}
+        }
+      };
+      const staticText = {
+        heroTitle:'heroTitle', heroLede:'heroLede', todayLabel:'todayLabel', sessionLabel:'sessionLabel', averageLabel:'averageLabel',
+        serverViewLabel:'serverViewLabel', zstdnetDownload:'downloadLabel', avgInLabel:'avgInLabel', avgOutLabel:'avgOutLabel', savedLabel:'savedLabel', savedHint:'savedHint',
+        todayInLabel:'shortIn', todayOutLabel:'shortOut', sessionInLabel:'shortIn', sessionOutLabel:'shortOut', trendTitle:'trendTitle',
+        legendIn:'wireInLabel', legendOut:'wireOutLabel', directionTitle:'directionTitle', directionSubtitle:'directionSubtitle',
+        wireTotalLabel:'wireTotalLabel', wireOutLabel:'wireOutLabel', wireInLabel:'wireInLabel', udpShareLabel:'udpShareLabel',
+        compressionTitle:'compressionTitle', compressionSubtitle:'compressionSubtitle', savingRatioLabel:'savingRatioLabel', wireRawLabel:'wireRawLabel',
+        dailyTitle:'dailyTitle', dailySubtitle:'dailySubtitle', bandwidthTitle:'bandwidthTitle', p95InLabel:'p95InLabel', p95OutLabel:'p95OutLabel',
+        p99InLabel:'p99InLabel', p99OutLabel:'p99OutLabel', peakInLabel:'peakInLabel', peakOutLabel:'peakOutLabel', runsTitle:'runsTitle',
+        runsSubtitle:'runsSubtitle', runStateHeader:'runStateHeader', runStartHeader:'runStartHeader', runDurationHeader:'runDurationHeader',
+        runTrafficHeader:'runTrafficHeader', runAvgInHeader:'runAvgInHeader', runAvgOutHeader:'runAvgOutHeader', runSavedHeader:'runSavedHeader',
+        rangeAllButton:'rangeAll', range1hButton:'range1h', range6hButton:'range6h', range12hButton:'range12h', range1dButton:'range1d', range7dButton:'range7d', rangeCustomButton:'rangeCustom', customStartLabel:'customStart', customEndLabel:'customEnd',
+        applyCustomRange:'queryAction', resetCustomRange:'resetAction'
+      };
+      const readPreference = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (ignored) { return fallback; } };
+      const savePreference = (key, value) => { try { localStorage.setItem(key, value); } catch (ignored) {} };
+      let language = readPreference('zstdnet-report-language', navigator.language && navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en');
+      if (!translations[language]) language = 'zh';
+      let theme = readPreference('zstdnet-report-theme', document.documentElement.dataset.theme || 'dark');
+      if (theme !== 'light' && theme !== 'dark') theme = 'dark';
+      const accentAliases = { classic:'default', vivid:'sea', soft:'warm-sand' };
+      const accentModes = ['default','warm-sand','mono','midnight','rose','aurora','sunset','forest','sea','lavender'];
+      let accent = readPreference('zstdnet-report-accent', document.documentElement.dataset.accent || 'default');
+      accent = accentAliases[accent] || accent;
+      if (!accentModes.includes(accent)) accent = 'default';
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let nf;
+      let dtf;
+      let fullDtf;
+      const selected = report.selected || {};
+      const today = report.today || {};
+      const session = report.session || {};
+      const server = report.server || {};
+      const runs = report.runs || [];
+      const allSeries = (report.series || []).slice().sort((a,b) => Number(a.timestamp) - Number(b.timestamp));
+      const firstSeriesAt = allSeries.length ? Number(allSeries[0].timestamp) : Number(report.generatedAt) || Date.now();
+      const lastSeries = allSeries.length ? allSeries[allSeries.length - 1] : null;
+      const lastSeriesAt = lastSeries ? Number(lastSeries.timestamp) + Math.max(1, Number(lastSeries.durationSeconds) || 0) * 1000 : Number(report.generatedAt) || Date.now();
+      const reportFrom = Number(report.from) || firstSeriesAt;
+      const reportTo = Number(report.to) || lastSeriesAt;
+      let queryStart = reportFrom;
+      let queryEnd = reportTo;
+      let activeWindow = 'all';
+      let visibleSeries = filterSeries(queryStart, queryEnd);
+      let queryMetrics = computeQueryMetrics(visibleSeries);
+      let directionModel = { total:0, ingress:0, egress:0, udp:0 };
+      let directionFocus = 'total';
+      let directionDisplayBytes = 0;
+      let directionValueFrame;
+
+      function currentCopy() { return translations[language]; }
+      function text(id, value) { const element = $(id); if (element) element.textContent = value; }
+      function cssColor(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+      function configureFormatters() {
+        const locale = language === 'zh' ? 'zh-CN' : 'en-US';
+        nf = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
+        dtf = new Intl.DateTimeFormat(locale, { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+        fullDtf = new Intl.DateTimeFormat(locale, { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+      }
+
+      function escapeHtml(value) {
+        const element = document.createElement('span');
+        element.textContent = String(value ?? '');
+        return element.innerHTML;
+      }
+      function bytes(value) {
+        value = Math.max(0, Number(value) || 0);
+        const units = ['B','KiB','MiB','GiB','TiB'];
+        let i = 0;
+        while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
+        return `${nf.format(value)} ${units[i]}`;
+      }
+      function rate(value) { return `${bytes(value)}/s`; }
+      function bandwidthRate(value) {
+        const bytesPerSecond = Math.max(0, Number(value) || 0);
+        const megabitsPerSecond = bytesPerSecond * 8 / 1000000;
+        const maximumFractionDigits = megabitsPerSecond < 10 ? 2 : 1;
+        return `${rate(bytesPerSecond)} · ${megabitsPerSecond.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { maximumFractionDigits })} Mbps`;
+      }
+      function percent(value) { return `${nf.format(Math.max(0, Number(value) || 0))}%`; }
+      function duration(seconds) {
+        seconds = Math.max(0, Math.floor(Number(seconds) || 0));
+        const d = Math.floor(seconds / 86400); seconds %= 86400;
+        const h = Math.floor(seconds / 3600); seconds %= 3600;
+        const m = Math.floor(seconds / 60);
+        if (language === 'zh') {
+          if (d) return `${d}天 ${h}小时`;
+          if (h) return `${h}小时 ${m}分`;
+          return `${m}分`;
+        }
+        if (d) return `${d}d ${h}h`;
+        if (h) return `${h}h ${m}m`;
+        return `${m}m`;
+      }
+
+      function bucketDuration(seconds) {
+        seconds = Math.max(1, Math.round(Number(seconds) || 0));
+        if (language === 'zh') {
+          return seconds >= 3600 ? `${Math.round(seconds / 3600)} 小时` : `${Math.max(1, Math.round(seconds / 60))} 分钟`;
+        }
+        if (seconds >= 3600) return `${Math.round(seconds / 3600)} hour`;
+        return `${Math.max(1, Math.round(seconds / 60))} minute`;
+      }
+      function total(t) { return (Number(t.wireIngressBytes)||0) + (Number(t.wireEgressBytes)||0); }
+
+      function pointDurationMs(point) {
+        return Math.max(1, Number(point.durationSeconds) || 0) * 1000;
+      }
+
+      function pointBytes(point, fields, rateField) {
+        const explicit = fields.reduce((sum, field) => sum + Math.max(0, Number(point[field]) || 0), 0);
+        if (explicit > 0 || !rateField) return explicit;
+        return Math.max(0, Number(point[rateField]) || 0) * pointDurationMs(point) / 1000;
+      }
+
+      function percentile(values, fraction) {
+        if (!values.length) return 0;
+        const sorted = values.slice().sort((a,b) => a - b);
+        const index = Math.max(0, Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1));
+        return sorted[index];
+      }
+
+      function filterSeries(start, end) {
+        return allSeries.filter(point => {
+          const pointStart = Number(point.timestamp) || 0;
+          const pointEnd = pointStart + pointDurationMs(point);
+          return pointEnd > start && pointStart < end;
+        });
+      }
+
+      function computeQueryMetrics(points) {
+        const metrics = {
+          rawIngressBytes:0, rawEgressBytes:0, tcpIngressBytes:0, tcpEgressBytes:0,
+          udpIngressBytes:0, udpEgressBytes:0, wireIngressBytes:0, wireEgressBytes:0,
+          averageIngressBytesPerSecond:0, averageEgressBytesPerSecond:0,
+          p95IngressBytesPerSecond:0, p95EgressBytesPerSecond:0,
+          p99IngressBytesPerSecond:0, p99EgressBytesPerSecond:0,
+          peakIngressBytesPerSecond:0, peakEgressBytesPerSecond:0,
+          savedBytes:0, wireToRawPercent:0, durationSeconds:0
+        };
+        const ingressRates = [];
+        const egressRates = [];
+        let elapsedSeconds = 0;
+        points.forEach(point => {
+          metrics.rawIngressBytes += pointBytes(point, ['rawIngressBytes']);
+          metrics.rawEgressBytes += pointBytes(point, ['rawEgressBytes']);
+          metrics.tcpIngressBytes += pointBytes(point, ['tcpIngressBytes']);
+          metrics.tcpEgressBytes += pointBytes(point, ['tcpEgressBytes']);
+          metrics.udpIngressBytes += pointBytes(point, ['udpIngressBytes']);
+          metrics.udpEgressBytes += pointBytes(point, ['udpEgressBytes']);
+          elapsedSeconds += Math.max(0, Number(point.durationSeconds) || 0);
+          ingressRates.push(Math.max(0, Number(point.ingressBytesPerSecond) || 0));
+          egressRates.push(Math.max(0, Number(point.egressBytesPerSecond) || 0));
+        });
+        metrics.wireIngressBytes = metrics.tcpIngressBytes + metrics.udpIngressBytes;
+        metrics.wireEgressBytes = metrics.tcpEgressBytes + metrics.udpEgressBytes;
+        metrics.durationSeconds = elapsedSeconds;
+        metrics.averageIngressBytesPerSecond = metrics.wireIngressBytes / Math.max(1, elapsedSeconds);
+        metrics.averageEgressBytesPerSecond = metrics.wireEgressBytes / Math.max(1, elapsedSeconds);
+        metrics.p95IngressBytesPerSecond = percentile(ingressRates, .95);
+        metrics.p95EgressBytesPerSecond = percentile(egressRates, .95);
+        metrics.p99IngressBytesPerSecond = percentile(ingressRates, .99);
+        metrics.p99EgressBytesPerSecond = percentile(egressRates, .99);
+        metrics.peakIngressBytesPerSecond = percentile(ingressRates, 1);
+        metrics.peakEgressBytesPerSecond = percentile(egressRates, 1);
+        const raw = metrics.rawIngressBytes + metrics.rawEgressBytes;
+        const wireTcp = metrics.tcpIngressBytes + metrics.tcpEgressBytes;
+        metrics.savedBytes = Math.max(0, raw - wireTcp);
+        metrics.wireToRawPercent = raw > 0 ? wireTcp * 100 / raw : 0;
+        return metrics;
+      }
+
+      function directionInfo(kind) {
+        const copy = currentCopy();
+        const totalBytes = directionModel.total;
+        const definitions = {
+          total: { label: copy.wireTotalLabel, bytes: totalBytes, share: '' },
+          egress: { label: copy.directionEgressLabel, bytes: directionModel.egress, share: totalBytes ? copy.directionShare(percent(directionModel.egress * 100 / totalBytes)) : '' },
+          ingress: { label: copy.directionIngressLabel, bytes: directionModel.ingress, share: totalBytes ? copy.directionShare(percent(directionModel.ingress * 100 / totalBytes)) : '' },
+          udp: { label: copy.directionUdpLabel, bytes: directionModel.udp, share: totalBytes ? copy.directionShare(percent(directionModel.udp * 100 / totalBytes)) : '' }
+        };
+        return definitions[kind] || definitions.total;
+      }
+
+      function animateDirectionValue(target, animate, duration = 260) {
+        if (reduceMotion) animate = false;
+        cancelAnimationFrame(directionValueFrame);
+        const value = $('wireTotal');
+        if (!animate) {
+          directionDisplayBytes = target;
+          value.textContent = bytes(target);
+          fitDonutValue();
+          return;
+        }
+        const start = directionDisplayBytes;
+        const startedAt = performance.now();
+        value.classList.remove('value-pop');
+        void value.offsetWidth;
+        value.classList.add('value-pop');
+        const frame = now => {
+          const progress = Math.min(1, (now - startedAt) / duration);
+          const eased = 1 - Math.pow(1 - progress, 3);
+          directionDisplayBytes = start + (target - start) * eased;
+          value.textContent = bytes(directionDisplayBytes);
+          fitDonutValue();
+          if (progress < 1) directionValueFrame = requestAnimationFrame(frame);
+        };
+        directionValueFrame = requestAnimationFrame(frame);
+      }
+
+      function fitDonutValue() {
+        const donut = $('directionDonut');
+        const value = $('wireTotal');
+        const availableWidth = Math.max(72, donut.clientWidth - 38);
+        let size = 21;
+        value.style.setProperty('--donut-value-size', `${size}px`);
+        while (size > 13 && value.getBoundingClientRect().width > availableWidth) {
+          size -= .5;
+          value.style.setProperty('--donut-value-size', `${size}px`);
+        }
+      }
+
+      function setDirectionFocus(kind, animate) {
+        if (kind === directionFocus && animate) return;
+        directionFocus = kind;
+        const info = directionInfo(kind);
+        const donut = $('directionDonut');
+        donut.classList.toggle('is-focus-egress', kind === 'egress');
+        donut.classList.toggle('is-focus-ingress', kind === 'ingress');
+        donut.classList.toggle('is-focus-udp', kind === 'udp');
+        donut.classList.toggle('is-detail', kind !== 'total');
+        document.querySelectorAll('[data-direction]').forEach(row => row.classList.toggle('is-active', row.dataset.direction === kind));
+        text('wireTotalLabel', info.label);
+        text('directionShare', info.share);
+        donut.setAttribute('aria-label', info.share ? `${info.label}: ${bytes(info.bytes)}, ${info.share}` : `${info.label}: ${bytes(info.bytes)}`);
+        animateDirectionValue(info.bytes, animate);
+      }
+
+      function renderRuns() {
+        const copy = currentCopy();
+        const body = $('runsBody');
+        if (!runs.length) {
+          body.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--muted-2)">${copy.noRuns}</td></tr>`;
+          return;
+        }
+        body.innerHTML = runs.map(run => {
+          const state = run.active ? copy.stateRunning : run.interrupted ? copy.stateInterrupted : copy.stateEnded;
+          const stateColor = run.active ? 'var(--green)' : run.interrupted ? 'var(--red)' : 'var(--muted-2)';
+          return `<tr><td><span class="run-state" style="--state:${stateColor}">${state}</span></td><td>${fullDtf.format(new Date(run.startedAt))}</td><td>${duration(run.durationSeconds)}</td><td>${bytes(total(run))}</td><td class="down">${rate(run.averageIngressBytesPerSecond)}</td><td class="up">${rate(run.averageEgressBytesPerSecond)}</td><td>${bytes(run.savedBytes)}</td></tr>`;
+        }).join('');
+      }
+
+      function renderDashboard() {
+        const copy = currentCopy();
+        configureFormatters();
+        document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+        document.title = copy.pageTitle;
+        Object.entries(staticText).forEach(([id, key]) => text(id, copy[key]));
+        text('serverIdentity', server.connectedAddress || server.listen || copy.defaultIdentity);
+        text('sessionState', server.sessionActive ? copy.running : copy.ended);
+        text('generatedAt', `${copy.generated} ${fullDtf.format(new Date(report.generatedAt))}`);
+        text('rangeChip', copy.ranges[report.range] || report.range);
+        const timeZone = server.timezone || 'UTC';
+        text('serverTimezone', `${copy.timezoneLabel}${timeZone}`);
+        $('serverTimezone').title = `${copy.timezoneHelp}\n${timeZone}`;
+        text('todayDuration', duration(today.durationSeconds));
+        text('todayTotal', bytes(total(today)));
+        text('todayIn', bytes(today.wireIngressBytes));
+        text('todayOut', bytes(today.wireEgressBytes));
+        text('sessionDuration', duration(session.durationSeconds));
+        text('sessionTotal', bytes(total(session)));
+        text('sessionIn', bytes(session.wireIngressBytes));
+        text('sessionOut', bytes(session.wireEgressBytes));
+        const metrics = queryMetrics;
+        const wireIn = metrics.wireIngressBytes;
+        const wireOut = metrics.wireEgressBytes;
+        const wireAll = wireIn + wireOut;
+        const udp = metrics.udpIngressBytes + metrics.udpEgressBytes;
+        const savingPercent = Math.max(0, 100 - metrics.wireToRawPercent);
+        text('avgIn', rate(metrics.averageIngressBytesPerSecond));
+        text('avgOut', rate(metrics.averageEgressBytesPerSecond));
+        text('savedBytes', bytes(metrics.savedBytes));
+        text('compressionRatio', copy.wireRaw(percent(metrics.wireToRawPercent)));
+        $('directionDonut').style.setProperty('--split', `${wireAll ? wireOut / wireAll * 100 : 50}%`);
+        text('wireIn', bytes(wireIn));
+        text('wireOut', bytes(wireOut));
+        text('udpShare', wireAll ? percent(udp / wireAll * 100) : '0%');
+        directionModel = { total:wireAll, ingress:wireIn, egress:wireOut, udp };
+        setDirectionFocus('total', false);
+        text('savingPercent', percent(savingPercent));
+        text('rawVsWire', `${bytes(metrics.rawIngressBytes + metrics.rawEgressBytes)} → ${bytes(metrics.tcpIngressBytes + metrics.tcpEgressBytes)}`);
+        $('savingMeter').style.setProperty('--width', `${Math.min(100, savingPercent)}%`);
+        text('wireRawPercent', percent(metrics.wireToRawPercent));
+        ['p95','p99','peak'].forEach(kind => {
+          text(`${kind}In`, bandwidthRate(metrics[`${kind}IngressBytesPerSecond`]));
+          text(`${kind}Out`, bandwidthRate(metrics[`${kind}EgressBytesPerSecond`]));
+        });
+        text('seriesSubtitle', copy.series(visibleSeries.length, report.current?.activeConnections || 0));
+        text('querySummary', copy.querySummary(dtf.format(new Date(queryStart)), dtf.format(new Date(queryEnd)), visibleSeries.length, bytes(wireAll)));
+        const bucketSeconds = visibleSeries.length ? visibleSeries[0].durationSeconds : report.series?.[0]?.durationSeconds;
+        text('rateExplanation', copy.rateExplanation(bucketDuration(bucketSeconds)));
+        text('bandwidthContext', visibleSeries.length < 20 ? copy.shortSampleContext(visibleSeries.length) : copy.fullSampleContext);
+        $('p95InStat').title = copy.p95Help;
+        $('p95OutStat').title = copy.p95Help;
+        $('p99InStat').title = copy.p99Help;
+        $('p99OutStat').title = copy.p99Help;
+        $('languageControl').dataset.active = language;
+        document.querySelectorAll('[data-lang]').forEach(button => {
+          const active = button.dataset.lang === language;
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        document.querySelectorAll('[data-window]').forEach(button => button.classList.toggle('active', button.dataset.window === activeWindow));
+        const showLongPresets = report.range === '30d';
+        $('range1dButton').hidden = !showLongPresets;
+        $('range7dButton').hidden = !showLongPresets;
+        renderRuns();
+      }
+
+      function applyTheme(nextTheme, persist) {
+        theme = nextTheme === 'light' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = theme;
+        const copy = currentCopy();
+        const targetLabel = theme === 'dark' ? copy.themeToLight : copy.themeToDark;
+        $('themeIcon').textContent = theme === 'dark' ? '☾' : '☀';
+        $('themeToggle').checked = theme === 'dark';
+        $('themeToggle').setAttribute('aria-label', targetLabel);
+        $('themeControl').title = targetLabel;
+        if (persist) savePreference('zstdnet-report-theme', theme);
+      }
+
+      function applyAccent(nextAccent, persist, burst) {
+        accent = accentModes.includes(nextAccent) ? nextAccent : 'default';
+        document.documentElement.dataset.accent = accent;
+        const control = $('accentToggle');
+        const copy = currentCopy();
+        const currentIndex = accentModes.indexOf(accent);
+        const nextMode = accentModes[(currentIndex + 1) % accentModes.length];
+        const label = copy.accentStatus(copy.accentNames[accent], copy.accentNames[nextMode]);
+        control.setAttribute('aria-label', label);
+        control.title = label;
+        if (burst && !reduceMotion) {
+          control.classList.remove('is-burst');
+          void control.offsetWidth;
+          control.classList.add('is-burst');
+          window.setTimeout(() => control.classList.remove('is-burst'), 650);
+        }
+        if (persist) savePreference('zstdnet-report-accent', accent);
+      }
+
+      function toDateInputValue(millis) {
+        const local = new Date(millis - new Date(millis).getTimezoneOffset() * 60 * 1000);
+        return local.toISOString().slice(0, 16);
+      }
+
+      function configureQueryInputs() {
+        const min = toDateInputValue(reportFrom);
+        const max = toDateInputValue(reportTo);
+        $('customStart').min = min;
+        $('customStart').max = max;
+        $('customEnd').min = min;
+        $('customEnd').max = max;
+        $('customStart').value = toDateInputValue(queryStart);
+        $('customEnd').value = toDateInputValue(queryEnd);
+      }
+
+      function setCustomRangeOpen(open) {
+        const panel = $('customRangePanel');
+        panel.classList.toggle('open', open);
+        panel.setAttribute('aria-hidden', String(!open));
+        if (open) configureQueryInputs();
+      }
+
+      function updateQuery(start, end, windowName, animate) {
+        queryStart = Math.max(reportFrom, start);
+        queryEnd = Math.min(reportTo, end);
+        activeWindow = windowName;
+        visibleSeries = filterSeries(queryStart, queryEnd);
+        queryMetrics = computeQueryMetrics(visibleSeries);
+        trafficHoverIndex = -1;
+        $('trafficTooltip').classList.remove('visible');
+        $('queryError').textContent = '';
+        renderDashboard();
+        if (animate) animateTraffic(); else drawTraffic();
+      }
+
+      function selectPreset(windowName) {
+        if (windowName === 'custom') {
+          activeWindow = 'custom';
+          setCustomRangeOpen(true);
+          renderDashboard();
+          return;
+        }
+        const presetDurations = {
+          '1h': 60 * 60 * 1000,
+          '6h': 6 * 60 * 60 * 1000,
+          '12h': 12 * 60 * 60 * 1000,
+          '1d': 24 * 60 * 60 * 1000,
+          '7d': 7 * 24 * 60 * 60 * 1000
+        };
+        const duration = presetDurations[windowName] || reportTo - reportFrom;
+        setCustomRangeOpen(false);
+        updateQuery(Math.max(reportFrom, reportTo - duration), reportTo, windowName, true);
+      }
+
+      function applyCustomRange() {
+        const start = new Date($('customStart').value).getTime();
+        const end = new Date($('customEnd').value).getTime();
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || start < reportFrom || end > reportTo) {
+          $('queryError').textContent = currentCopy().invalidRange;
+          return;
+        }
+        updateQuery(start, end, 'custom', true);
+      }
+
+      function setupCanvas(canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        canvas.width = Math.max(1, Math.round(rect.width * dpr));
+        canvas.height = Math.max(1, Math.round(rect.height * dpr));
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr,0,0,dpr,0,0);
+        return {ctx, width:rect.width, height:rect.height};
+      }
+      function roundedMax(max) {
+        if (!max) return 1;
+        const p = 10 ** Math.floor(Math.log10(max));
+        return Math.ceil(max / p) * p;
+      }
+
+      let trafficHit = [];
+      let dailyHit = [];
+      let trafficHoverIndex = -1;
+      let dailyHoverIndex = -1;
+      let trafficReveal = 1;
+      let dailyReveal = 1;
+      let trafficAnimationFrame;
+      let dailyAnimationFrame;
+
+      function animateTraffic() {
+        cancelAnimationFrame(trafficAnimationFrame);
+        if (reduceMotion) {
+          trafficReveal = 1;
+          drawTraffic();
+          return;
+        }
+        const startedAt = performance.now();
+        trafficReveal = 0;
+        const frame = now => {
+          const progress = Math.min(1, (now - startedAt) / 260);
+          trafficReveal = 1 - Math.pow(1 - progress, 3);
+          drawTraffic();
+          if (progress < 1) trafficAnimationFrame = requestAnimationFrame(frame);
+        };
+        trafficAnimationFrame = requestAnimationFrame(frame);
+      }
+
+      function animateDaily() {
+        cancelAnimationFrame(dailyAnimationFrame);
+        if (reduceMotion) {
+          dailyReveal = 1;
+          drawDaily();
+          return;
+        }
+        const startedAt = performance.now();
+        dailyReveal = 0;
+        const frame = now => {
+          const progress = Math.min(1, (now - startedAt) / 760);
+          dailyReveal = progress;
+          drawDaily();
+          if (progress < 1) dailyAnimationFrame = requestAnimationFrame(frame);
+        };
+        dailyAnimationFrame = requestAnimationFrame(frame);
+      }
+
+      function chartPadding(ctx, values, right, top, bottom) {
+        ctx.font = '10px system-ui';
+        const left = Math.max(52, Math.ceil(Math.max(...values.map(value => ctx.measureText(value).width)) + 16));
+        return {l:left, r:right, t:top, b:bottom};
+      }
+
+      function showTooltip(wrapper, canvas, tooltip, x, y) {
+        const wrapperRect = wrapper.getBoundingClientRect();
+        const canvasRect = canvas.getBoundingClientRect();
+        const offsetX = canvasRect.left - wrapperRect.left;
+        const offsetY = canvasRect.top - wrapperRect.top;
+        const minX = Math.min(112, wrapperRect.width / 2);
+        tooltip.style.left = `${Math.max(minX, Math.min(wrapperRect.width - minX, offsetX + x))}px`;
+        tooltip.style.top = `${Math.max(88, Math.min(wrapperRect.height - 18, offsetY + y))}px`;
+        tooltip.classList.add('visible');
+      }
+
+      function drawTraffic() {
+        const points = visibleSeries;
+        const canvas = $('trafficChart');
+        const {ctx,width,height} = setupCanvas(canvas);
+        ctx.clearRect(0,0,width,height);
+        if (!points.length) { drawEmpty(ctx,width,height,currentCopy().emptyTraffic); trafficHit=[]; return; }
+        const max = roundedMax(Math.max(...points.flatMap(p => [Number(p.ingressBytesPerSecond)||0, Number(p.egressBytesPerSecond)||0])));
+        ctx.font = '10px system-ui'; ctx.textBaseline='middle';
+        const yLabels = Array.from({length:5}, (_, i) => rate(max * (1 - i / 4)));
+        const pad = chartPadding(ctx, yLabels, 13, 14, 34);
+        const cw = Math.max(1, width-pad.l-pad.r), ch = Math.max(1, height-pad.t-pad.b);
+        for(let i=0;i<=4;i++){
+          const y=pad.t+ch*i/4;
+          ctx.strokeStyle=cssColor('--chart-grid'); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(pad.l,y+.5); ctx.lineTo(width-pad.r,y+.5); ctx.stroke();
+          ctx.fillStyle=cssColor('--chart-label'); ctx.textAlign='right'; ctx.fillText(yLabels[i],pad.l-9,y);
+        }
+        const x = i => pad.l + (points.length===1 ? cw/2 : cw*i/(points.length-1));
+        const y = v => pad.t + ch - (Number(v)||0)/max*ch;
+        const fill = (field, color) => {
+          const grad=ctx.createLinearGradient(0,pad.t,0,pad.t+ch); grad.addColorStop(0,color); grad.addColorStop(1,'rgba(0,0,0,0)');
+          ctx.beginPath(); points.forEach((p,i)=>{ const px=x(i),py=y(p[field]); i?ctx.lineTo(px,py):ctx.moveTo(px,py); });
+          ctx.lineTo(x(points.length-1),pad.t+ch); ctx.lineTo(x(0),pad.t+ch); ctx.closePath(); ctx.fillStyle=grad; ctx.fill();
+        };
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(pad.l, pad.t, cw * trafficReveal, ch);
+        ctx.clip();
+        fill('ingressBytesPerSecond',cssColor('--blue-soft'));
+        fill('egressBytesPerSecond',cssColor('--orange-soft'));
+        const line = (field,color) => { ctx.beginPath(); points.forEach((p,i)=>{ const px=x(i),py=y(p[field]); i?ctx.lineTo(px,py):ctx.moveTo(px,py); }); ctx.strokeStyle=color; ctx.lineWidth=2; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.stroke(); };
+        line('ingressBytesPerSecond',cssColor('--blue')); line('egressBytesPerSecond',cssColor('--orange'));
+        ctx.restore();
+        const labels=Math.min(6,points.length); ctx.fillStyle=cssColor('--chart-label');
+        for(let i=0;i<labels;i++){ const idx=Math.round(i*(points.length-1)/Math.max(1,labels-1)); ctx.textAlign=i===0?'left':i===labels-1?'right':'center'; ctx.fillText(dtf.format(new Date(points[idx].timestamp)),x(idx),height-13); }
+        trafficHit=points.map((p,i)=>({x:x(i), ingressY:y(p.ingressBytesPerSecond), egressY:y(p.egressBytesPerSecond), point:p}));
+        if (trafficHoverIndex >= 0 && trafficHoverIndex < trafficHit.length) {
+          const hit = trafficHit[trafficHoverIndex];
+          ctx.save();
+          ctx.strokeStyle = cssColor('--chart-label');
+          ctx.setLineDash([3, 4]);
+          ctx.beginPath(); ctx.moveTo(hit.x, pad.t); ctx.lineTo(hit.x, pad.t + ch); ctx.stroke();
+          ctx.setLineDash([]);
+          [[hit.ingressY, cssColor('--blue')], [hit.egressY, cssColor('--orange')]].forEach(([pointY, color]) => {
+            ctx.fillStyle = cssColor('--panel'); ctx.strokeStyle = color; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(hit.x, pointY, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          });
+          ctx.restore();
+        }
+      }
+      function drawDaily() {
+        const points = report.daily || [];
+        const canvas = $('dailyChart'); const {ctx,width,height}=setupCanvas(canvas); ctx.clearRect(0,0,width,height);
+        if(!points.length){ drawEmpty(ctx,width,height,currentCopy().emptyDaily); return; }
+        const totals=points.map(p=>(Number(p.wireIngressBytes)||0)+(Number(p.wireEgressBytes)||0));
+        const max=roundedMax(Math.max(...totals));
+        ctx.font='10px system-ui'; ctx.textBaseline='middle';
+        const yLabels = Array.from({length:4}, (_, i) => bytes(max * (1 - i / 3)));
+        const pad=chartPadding(ctx, yLabels, 12, 10, 31), cw=Math.max(1,width-pad.l-pad.r), ch=Math.max(1,height-pad.t-pad.b);
+        for(let i=0;i<=3;i++){const y=pad.t+ch*i/3;ctx.strokeStyle=cssColor('--chart-grid');ctx.beginPath();ctx.moveTo(pad.l,y+.5);ctx.lineTo(width-pad.r,y+.5);ctx.stroke();ctx.fillStyle=cssColor('--chart-label');ctx.textAlign='right';ctx.fillText(yLabels[i],pad.l-8,y);}
+        const slot=cw/points.length, bw=Math.max(3,Math.min(24,slot*.55));
+        dailyHit=[];
+        points.forEach((p,i)=>{const px=pad.l+slot*i+(slot-bw)/2;const delay=points.length>1?i/(points.length-1)*.18:0;const local=Math.max(0,Math.min(1,(dailyReveal-delay)/(1-delay||1)));const reveal=1-Math.pow(1-local,3);const inV=Number(p.wireIngressBytes)||0,outV=Number(p.wireEgressBytes)||0;const inH=inV/max*ch*reveal,outH=outV/max*ch*reveal;ctx.fillStyle=cssColor('--blue');ctx.fillRect(px,pad.t+ch-inH,bw,inH);ctx.fillStyle=cssColor('--orange');ctx.fillRect(px,pad.t+ch-inH-outH,bw,outH);dailyHit.push({x:px+bw/2,left:px,width:bw,top:pad.t+ch-inH-outH,point:p});});
+        if (dailyHoverIndex >= 0 && dailyHoverIndex < dailyHit.length) {
+          const hit = dailyHit[dailyHoverIndex];
+          ctx.save(); ctx.strokeStyle=cssColor('--text'); ctx.globalAlpha=.55; ctx.lineWidth=1;
+          ctx.strokeRect(hit.left - 2, hit.top - 2, hit.width + 4, pad.t + ch - hit.top + 4); ctx.restore();
+        }
+        const dateLabels=points.map(point=>(point.date||'').slice(5));
+        const widestDateLabel=Math.max(...dateLabels.map(label=>ctx.measureText(label).width));
+        const labelStep=Math.max(1,Math.ceil((widestDateLabel+12)/slot));
+        const labelIndexes=[];
+        for(let i=0;i<points.length;i+=labelStep) labelIndexes.push(i);
+        const lastIndex=points.length-1;
+        if(labelIndexes[labelIndexes.length-1]!==lastIndex){
+          if(lastIndex-labelIndexes[labelIndexes.length-1]<labelStep) labelIndexes.pop();
+          labelIndexes.push(lastIndex);
+        }
+        ctx.fillStyle=cssColor('--chart-label');ctx.textAlign='center';
+        labelIndexes.forEach(idx=>ctx.fillText(dateLabels[idx],pad.l+slot*idx+slot/2,height-12));
+      }
+      function drawEmpty(ctx,w,h,message){ctx.fillStyle=cssColor('--chart-label');ctx.font='12px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(message,w/2,h/2);}
+
+      const wrap=$('trafficChartWrap'), tip=$('trafficTooltip'), trafficCanvas=$('trafficChart');
+      wrap.addEventListener('mousemove',event=>{
+        if(!trafficHit.length)return;
+        const canvasRect=trafficCanvas.getBoundingClientRect(), mx=event.clientX-canvasRect.left;
+        let hit=trafficHit.reduce((a,b)=>Math.abs(b.x-mx)<Math.abs(a.x-mx)?b:a);
+        const nextIndex=trafficHit.indexOf(hit);
+        if (trafficHoverIndex !== nextIndex) { trafficHoverIndex=nextIndex; drawTraffic(); }
+        const p=hit.point;
+        const copy = currentCopy();
+        tip.innerHTML=`<div class="tooltip-time">${fullDtf.format(new Date(p.timestamp))}</div><div class="tooltip-row"><span>${copy.tooltipIn}</span><strong class="down">${rate(p.ingressBytesPerSecond)}</strong></div><div class="tooltip-row"><span>${copy.tooltipOut}</span><strong class="up">${rate(p.egressBytesPerSecond)}</strong></div><div class="tooltip-row"><span>TCP / UDP</span><strong>${bytes(pointBytes(p,['tcpIngressBytes','tcpEgressBytes']))} / ${bytes(pointBytes(p,['udpIngressBytes','udpEgressBytes']))}</strong></div>`;
+        showTooltip(wrap, trafficCanvas, tip, hit.x, Math.min(hit.ingressY, hit.egressY));
+      });
+      wrap.addEventListener('mouseleave',()=>{trafficHoverIndex=-1; tip.classList.remove('visible'); drawTraffic();});
+
+      const dailyWrap=$('dailyChartWrap'), dailyTip=$('dailyTooltip'), dailyCanvas=$('dailyChart');
+      dailyWrap.addEventListener('mousemove', event => {
+        if (!dailyHit.length) return;
+        const canvasRect=dailyCanvas.getBoundingClientRect(), mx=event.clientX-canvasRect.left;
+        const hit=dailyHit.reduce((a,b)=>Math.abs(b.x-mx)<Math.abs(a.x-mx)?b:a);
+        const nextIndex=dailyHit.indexOf(hit);
+        if (dailyHoverIndex !== nextIndex) { dailyHoverIndex=nextIndex; drawDaily(); }
+        const point=hit.point, copy=currentCopy();
+        dailyTip.innerHTML=`<div class="tooltip-time">${escapeHtml(point.date) || ''}</div><div class="tooltip-row"><span>${copy.tooltipIn}</span><strong class="down">${bytes(point.wireIngressBytes)}</strong></div><div class="tooltip-row"><span>${copy.tooltipOut}</span><strong class="up">${bytes(point.wireEgressBytes)}</strong></div><div class="tooltip-row"><span>${copy.tooltipTotal}</span><strong>${bytes(total(point))}</strong></div><div class="tooltip-row"><span>${copy.tooltipAverage}</span><strong>${rate((total(point)) / Math.max(1, Number(point.durationSeconds) || 1))}</strong></div>`;
+        showTooltip(dailyWrap, dailyCanvas, dailyTip, hit.x, hit.top);
+      });
+      dailyWrap.addEventListener('mouseleave',()=>{dailyHoverIndex=-1; dailyTip.classList.remove('visible'); drawDaily();});
+
+      const directionDonut = $('directionDonut');
+      directionDonut.addEventListener('mousemove', event => {
+        const rect = directionDonut.getBoundingClientRect();
+        const dx = event.clientX - rect.left - rect.width / 2;
+        const dy = event.clientY - rect.top - rect.height / 2;
+        const distance = Math.hypot(dx, dy);
+        const outerRadius = rect.width / 2;
+        const innerRadius = outerRadius - Math.max(14, rect.width * .12);
+        if (distance < innerRadius || distance > outerRadius) {
+          setDirectionFocus('total', true);
+          return;
+        }
+        const angle = (Math.atan2(dy, dx) * 180 / Math.PI + 450) % 360;
+        const split = directionModel.total ? directionModel.egress * 360 / directionModel.total : 180;
+        setDirectionFocus(angle < split ? 'egress' : 'ingress', true);
+      });
+      directionDonut.addEventListener('mouseleave', () => setDirectionFocus('total', true));
+      directionDonut.addEventListener('focus', () => setDirectionFocus('total', false));
+      document.querySelectorAll('[data-direction]').forEach(row => {
+        const kind = row.dataset.direction;
+        row.addEventListener('mouseenter', () => setDirectionFocus(kind, true));
+        row.addEventListener('mouseleave', () => setDirectionFocus('total', true));
+        row.addEventListener('focus', () => setDirectionFocus(kind, true));
+        row.addEventListener('blur', () => setDirectionFocus('total', true));
+      });
+
+      let resizeTimer;
+      const redraw=()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{trafficReveal=1;dailyReveal=1;drawTraffic();drawDaily();},80);};
+      window.addEventListener('resize',redraw,{passive:true});
+      document.querySelectorAll('[data-window]').forEach(button => button.addEventListener('click', () => selectPreset(button.dataset.window)));
+      $('applyCustomRange').addEventListener('click', applyCustomRange);
+      $('resetCustomRange').addEventListener('click', () => {
+        setCustomRangeOpen(false);
+        updateQuery(reportFrom, reportTo, 'all', true);
+      });
+      document.querySelectorAll('[data-lang]').forEach(button => button.addEventListener('click', () => {
+        language = button.dataset.lang;
+        savePreference('zstdnet-report-language', language);
+        renderDashboard();
+        applyTheme(theme, false);
+        applyAccent(accent, false, false);
+        tip.classList.remove('visible');
+        dailyTip.classList.remove('visible');
+        drawTraffic();
+        drawDaily();
+      }));
+      $('accentToggle').addEventListener('click', () => {
+        const next = accentModes[(accentModes.indexOf(accent) + 1) % accentModes.length];
+        applyAccent(next, true, true);
+        drawTraffic();
+        drawDaily();
+      });
+      $('themeToggle').addEventListener('change', event => {
+        applyTheme(event.currentTarget.checked ? 'dark' : 'light', true);
+        drawTraffic();
+        drawDaily();
+      });
+      applyTheme(theme, false);
+      applyAccent(accent, false, false);
+      renderDashboard();
+      applyTheme(theme, false);
+      applyAccent(accent, false, false);
+      setCustomRangeOpen(false);
+      animateTraffic();
+      directionDisplayBytes = 0;
+      text('wireTotal', bytes(0));
+      fitDonutValue();
+      animateDirectionValue(directionModel.total, true, 900);
+      animateDaily();
+    })();
+  </script>
+</body>
+</html>
