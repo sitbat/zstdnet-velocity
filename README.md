@@ -6,10 +6,10 @@
 
 | 客户端游戏版本 | 分支 | 配套客户端版本 |
 | --- | --- | --- |
-| Fabric 1.21.11 | [main](https://github.com/sitbat/zstdnet-client/tree/main) | 2.1.1 |
-| Fabric 26.3 | [mc/26.3](https://github.com/sitbat/zstdnet-client/tree/mc/26.3) | 2.2.1 |
+| Fabric 1.21.11 | [main](https://github.com/sitbat/zstdnet-client/tree/main) | 2.1.2 |
+| Fabric 26.3 | [mc/26.3](https://github.com/sitbat/zstdnet-client/tree/mc/26.3) | 2.2.2 |
 
-两个分支均使用本插件 2.1.0 和传输协议 v2。Velocity 自身不做跨版本翻译；后端版本不同于客户端实际连接协议时，仍需独立的协议转换器。26.3 客户端与 ViaFabricPlus 配合时使用已修复翻译顺序的客户端 2.2.1。
+两个分支均使用本插件 2.1.0 和传输协议 v2。客户端 2.1.2 / 2.2.2 修复高速 tick 触发客户端接收预算误断连，代理插件及其防刷包限额保持不变，无需为此更换插件。Velocity 自身不做跨版本翻译；后端版本不同于客户端实际连接协议时，仍需独立的协议转换器。以上客户端版本均已包含 Via 出站翻译顺序修复。
 
 ## 安装与认证
 
