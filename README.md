@@ -1,6 +1,6 @@
 # ZstdNet Velocity
 
-用于 **Velocity 4.3.0 build 44** 的客户端连接压缩插件，当前版本 **2.1.0**。在正版验证完成后，与配套客户端协商连续 Zstd 传输，数据仍经过原版 AES 加密；不新增监听端口，后端链路保持标准 Minecraft 协议。未安装客户端模组的玩家照常使用原版连接。
+用于 **Velocity 4.3.0 build 44** 的客户端连接压缩插件，当前版本 **2.1.1**。在正版验证完成后，与配套客户端协商连续 Zstd 传输，数据仍经过原版 AES 加密；不新增监听端口，后端链路保持标准 Minecraft 协议。默认允许未安装客户端模组的玩家使用原版连接；可配置为强制要求成功启用 ZstdNet。
 
 本仓库只包含代理插件和公共核心。客户端位于 [sitbat/zstdnet-client](https://github.com/sitbat/zstdnet-client)：
 
@@ -9,11 +9,11 @@
 | Fabric 1.21.11 | [main](https://github.com/sitbat/zstdnet-client/tree/main) | 2.1.2 |
 | Fabric 26.3 | [mc/26.3](https://github.com/sitbat/zstdnet-client/tree/mc/26.3) | 2.2.2 |
 
-两个分支均使用本插件 2.1.0 和传输协议 v2。客户端 2.1.2 / 2.2.2 修复高速 tick 触发客户端接收预算误断连，代理插件及其防刷包限额保持不变，无需为此更换插件。Velocity 自身不做跨版本翻译；后端版本不同于客户端实际连接协议时，仍需独立的协议转换器。以上客户端版本均已包含 Via 出站翻译顺序修复。
+两个分支均兼容本插件 2.1.1（也兼容 2.1.0）和传输协议 v2。客户端 2.1.2 / 2.2.2 修复高速 tick 触发客户端接收预算误断连，代理插件及其防刷包限额保持不变，无需为此更换插件。Velocity 自身不做跨版本翻译；后端版本不同于客户端实际连接协议时，仍需独立的协议转换器。以上客户端版本均已包含 Via 出站翻译顺序修复。
 
 ## 安装与认证
 
-1. 从 [Releases](https://github.com/sitbat/zstdnet-velocity/releases) 下载 `zstdnet-velocity-2.1.0.jar`，停服后放入 Velocity 的 `plugins/`，移除旧版同名插件。代理使用 Java 25。
+1. 从 [Releases](https://github.com/sitbat/zstdnet-velocity/releases) 下载 `zstdnet-velocity-2.1.1.jar`，停服后放入 Velocity 的 `plugins/`，移除旧版同名插件。代理使用 Java 25。
 2. 从 [客户端 Releases](https://github.com/sitbat/zstdnet-client/releases) 下载对应 Minecraft 版本的生产 JAR，放入玩家的 `mods/`。后端不安装这个客户端模组。
 3. Velocity 保持 `online-mode=true`、`player-info-forwarding-mode="modern"`，使用现有 forwarding secret。插件沿用代理的正版身份，不修改玩家 UUID、GameProfile 或认证流程。
 4. Fabric 后端沿用 FabricProxy-Lite，secret 与 Velocity 一致。现有 `server.properties` 的 `online-mode=true` 可以保留，同时保持 FabricProxy-Lite 的 `hackOnlineMode=true`。这里的后端登录由 FabricProxy-Lite 接管，身份以正版代理和 modern forwarding 为信任边界，并非两次独立的 Mojang 登录握手；后端入口应只允许可信代理访问。
@@ -27,6 +27,7 @@
 
 ```properties
 enabled=true
+require_client=false
 level=9
 debug=false
 max_conn_per_ip=64
@@ -37,6 +38,10 @@ report_admin_uuids=
 ```
 
 `level` 为代理下行压缩等级，范围 1–22，历史窗口上限为 8 MiB；现有配置值会保留。客户端自行配置上行等级。请求限制在 PreLogin 阶段生效，并发限制统计已登录的真实代理连接；对应非正数可关闭限制。除 `allowreport` 命令写入的名单外，修改配置后重启生效。
+
+将 `require_client=true` 后重启 Velocity，即强制要求客户端完成 ZstdNet 协商；配套客户端无需更新。未安装、传输协议版本不兼容或协商失败的玩家会被断开；切换压缩前的拒绝会显示安装说明与客户端下载地址，切换开始后的异常会直接关闭连接以免破坏数据流。默认 `false`，旧配置会自动补入该项并保留原有设置。
+
+强制模式从首次可用的 PLAY 状态开始等待，最长 10 秒；初次进入 PLAY 前的配置阶段与资源包加载不占用该期限。初始世界数据会暂存，队列满或 5 秒等待超时也会拒绝连接，不再回退为普通传输。验证期间后端可能已经收到玩家登录，因此这不是后端登录前的模组检查。插件停用、运行条件不满足或连接管线不受支持时，强制模式拒绝进入；同时配置 `enabled=false` 与 `require_client=true` 会拒绝所有新连接。`/zstdnetproxy status` 会显示该开关。
 
 `report_admin_uuids` 是逗号分隔的正版 UUID 白名单，默认空。Fabric 后端的 OP 权限不会自动成为 Velocity 权限。
 
@@ -68,7 +73,7 @@ $env:JAVA_HOME = $env:JAVA25_HOME
 
 Linux/macOS 可使用 `pwsh ./tools/download-velocity.ps1` 和 `./gradlew`。下载工具从 PaperMC 官方获取固定目标，并验证 SHA256；Gradle Wrapper 也固定发行版校验值。目标代理 JAR 只作为编译和测试依赖，不打包进插件，`runtime/` 不入库。
 
-产物为 `velocity/build/libs/zstdnet-velocity-2.1.0.jar`。测试范围和验证边界见 [VALIDATION.md](VALIDATION.md)。
+产物为 `velocity/build/libs/zstdnet-velocity-2.1.1.jar`。测试范围和验证边界见 [VALIDATION.md](VALIDATION.md)。
 
 ## 来源与许可
 

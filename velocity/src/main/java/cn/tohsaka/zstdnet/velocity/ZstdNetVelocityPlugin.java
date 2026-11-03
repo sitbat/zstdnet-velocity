@@ -68,6 +68,9 @@ public final class ZstdNetVelocityPlugin {
             "frame-encoder", 2 * 1024 * 1024);
     private static final int MAX_CONTROL_MESSAGES = 8;
     private static final long HANDSHAKE_TIMEOUT_SECONDS = 10;
+    private static final Component REQUIRED_CLIENT_MESSAGE = Component.text(
+            "此服务器要求安装兼容的 ZstdNet 客户端模组，并成功启用 Zstd 压缩。\n"
+            + "请安装或更新对应游戏版本的模组后重新连接：\nhttps://github.com/sitbat/zstdnet-client/releases");
 
     private final ProxyServer proxy;
     private final Logger logger;
@@ -98,6 +101,7 @@ public final class ZstdNetVelocityPlugin {
         proxy.getCommandManager().register(proxy.getCommandManager().metaBuilder("zstdnetproxy")
                 .plugin(this).build(), new StatusCommand());
         try {
+            settings = ProxySettings.startupPolicy(directory);
             settings = ProxySettings.load(directory);
             limiter = new ConnectionLimiter(settings);
             access = new VelocityAccess();
@@ -116,16 +120,23 @@ public final class ZstdNetVelocityPlugin {
                         () -> limiter.sweep(System.currentTimeMillis()));
                 traffic.start();
             }
-            logger.info("ZstdNet 2.1 loaded: transport={}, level={}, target=Velocity 4.3.0 build 44; native account verification retained.",
-                    enabled, settings.level());
+            logger.info("ZstdNet 2.1.1 loaded: transport={}, level={}, require_client={}, target=Velocity 4.3.0 build 44; native account verification retained.",
+                    enabled, settings.level(), settings.requireClient());
         } catch (IOException | ReflectiveOperationException | RuntimeException error) {
             enabled = false;
-            logger.error("ZstdNet transport disabled; vanilla networking remains available.", error);
+            logger.error(settings.requireClient()
+                    ? "ZstdNet transport disabled; require_client=true rejects new connections."
+                    : "ZstdNet transport disabled; vanilla networking remains available.", error);
         }
     }
 
     @Subscribe(order = PostOrder.FIRST)
     public void preLogin(PreLoginEvent event) {
+        if (settings.requireClient() && !enabled) {
+            event.setResult(PreLoginEvent.PreLoginComponentResult.denied(Component.text(
+                    "服务器要求 ZstdNet，但代理压缩功能当前不可用，请联系管理员。")));
+            return;
+        }
         ConnectionLimiter current = limiter;
         if (enabled && current != null && !current.request(ip(event.getConnection().getRemoteAddress()), System.currentTimeMillis())) {
             event.setResult(PreLoginEvent.PreLoginComponentResult.denied(Component.text("Too many connection requests. Please try again later.")));
@@ -134,7 +145,10 @@ public final class ZstdNetVelocityPlugin {
 
     @Subscribe(order = PostOrder.FIRST)
     public void postLogin(PostLoginEvent event) {
-        if (!enabled) return;
+        if (!enabled) {
+            if (settings.requireClient()) event.getPlayer().disconnect(REQUIRED_CLIENT_MESSAGE);
+            return;
+        }
         Player player = event.getPlayer();
         ConnectionLimiter.Lease lease = limiter.acquire(ip(player.getRemoteAddress()), System.currentTimeMillis());
         if (lease == null) {
@@ -215,27 +229,39 @@ public final class ZstdNetVelocityPlugin {
         try {
             Channel channel = current.channel(player);
             channel.eventLoop().execute(() -> {
-                if (!enabled || !channel.isActive()) return;
-                Session session = channel.attr(SESSION).get();
-                if (session == null) {
-                    if (!supportedPipeline(channel)) {
-                        logger.warn("ZstdNet skipped unsupported pipeline for {}; using vanilla networking.", player.getUsername());
-                        return;
+                try {
+                    if (!enabled || !channel.isActive()) return;
+                    Session session = channel.attr(SESSION).get();
+                    if (session == null) {
+                        if (!supportedPipeline(channel)) {
+                            if (settings.requireClient()) { player.disconnect(REQUIRED_CLIENT_MESSAGE); return; }
+                            logger.warn("ZstdNet skipped unsupported pipeline for {}; using vanilla networking.", player.getUsername());
+                            return;
+                        }
+                        session = new Session(player, channel, current);
+                        channel.attr(SESSION).set(session);
+                        sessions.put(channel, session);
+                        Session attached = session;
+                        TrafficRuntime runtime = traffic;
+                        if (runtime != null) runtime.track(channel, session.statistics,
+                                () -> attached.stage == Stage.ACTIVE && channel.isActive(),
+                                payload -> attached.sendAuxiliary(AuxiliaryProtocol.HUD, payload));
+                        channel.pipeline().addBefore("minecraft-encoder", INITIAL_GATE, session.gate);
+                        channel.pipeline().addBefore("handler", INTERCEPTOR, new ControlInterceptor(session, current));
+                        session.awaitRequiredClient();
                     }
-                    session = new Session(player, channel, current);
-                    channel.attr(SESSION).set(session);
-                    sessions.put(channel, session);
-                    Session attached = session;
-                    TrafficRuntime runtime = traffic;
-                    if (runtime != null) runtime.track(channel, session.statistics,
-                            () -> attached.stage == Stage.ACTIVE && channel.isActive(),
-                            payload -> attached.sendAuxiliary(AuxiliaryProtocol.HUD, payload));
-                    channel.pipeline().addBefore("minecraft-encoder", INITIAL_GATE, session.gate);
-                    channel.pipeline().addBefore("handler", INTERCEPTOR, new ControlInterceptor(session, current));
+                    if (firstMessage != null) session.receive(firstMessage, false);
+                } catch (RuntimeException error) {
+                    logger.warn("ZstdNet could not attach the transport handlers.", error);
+                    if (settings.requireClient()) {
+                        Session failed = channel.attr(SESSION).get();
+                        if (failed != null) failed.rejectRequiredClient();
+                        else player.disconnect(REQUIRED_CLIENT_MESSAGE);
+                    }
                 }
-                if (firstMessage != null) session.receive(firstMessage, false);
             });
         } catch (ReflectiveOperationException | RuntimeException error) {
+            if (settings.requireClient()) player.disconnect(REQUIRED_CLIENT_MESSAGE);
             if (settings.debug()) logger.warn("ZstdNet cannot inspect player connection; using vanilla networking.", error);
         }
     }
@@ -432,7 +458,7 @@ public final class ZstdNetVelocityPlugin {
             this.channel = channel;
             this.adapter = adapter;
             gate = new InitialSyncGate("minecraft-encoder",
-                    () -> hello && stage != Stage.ACTIVE && stage != Stage.REJECTED && playing(),
+                    () -> (hello || settings.requireClient()) && stage != Stage.ACTIVE && stage != Stage.REJECTED && playing(),
                     this::tryPrepare, this::fallback);
         }
 
@@ -445,10 +471,33 @@ public final class ZstdNetVelocityPlugin {
         private boolean playing() {
             try {
                 return channel.isActive() && player.getProtocolState() == ProtocolState.PLAY
-                        && !adapter.switchingConfiguration(player);
-            } catch (ReflectiveOperationException | RuntimeException error) {
+                        && !VelocityAccess.hasPendingPlayPackets(channel);
+            } catch (RuntimeException error) {
                 return false;
             }
+        }
+
+        // Configuration/resource-pack loading does not consume the PLAY negotiation deadline.
+        private void awaitRequiredClient() {
+            if (!settings.requireClient() || finished.get() || !channel.isActive()
+                    || stage == Stage.ACTIVE || stage == Stage.REJECTED) return;
+            if (playing()) {
+                ensureTimeout();
+                if (hello) tryPrepare();
+            } else retry(this::awaitRequiredClient);
+        }
+
+        private void rejectBeforeNegotiation() {
+            if (settings.requireClient()) { rejectRequiredClient(); return; }
+            stage = Stage.REJECTED;
+            cancelTimeout();
+        }
+
+        private void rejectRequiredClient() {
+            stage = Stage.REJECTED;
+            cancelTimeout();
+            gate.discard();
+            player.disconnect(REQUIRED_CLIENT_MESSAGE);
         }
 
         private void receive(byte[] bytes, boolean synchronous) {
@@ -461,19 +510,18 @@ public final class ZstdNetVelocityPlugin {
             try {
                 message = ControlMessage.decode(bytes);
             } catch (IllegalArgumentException error) {
-                if (stage == Stage.VANILLA) { stage = Stage.REJECTED; return; }
+                if (stage == Stage.VANILLA) { rejectBeforeNegotiation(); return; }
                 fail("invalid transport control message", error);
                 return;
             }
             if (message.version() != ControlMessage.VERSION) {
-                if (stage == Stage.VANILLA) { stage = Stage.REJECTED; return; }
+                if (stage == Stage.VANILLA) { rejectBeforeNegotiation(); return; }
                 fail("transport protocol version changed", null);
                 return;
             }
             if (stage == Stage.ACTIVE) return;
             if (!authorized()) {
-                stage = Stage.REJECTED;
-                cancelTimeout();
+                rejectBeforeNegotiation();
                 return;
             }
             if (message.opcode() == ControlMessage.HELLO && stage == Stage.VANILLA) {
@@ -491,14 +539,14 @@ public final class ZstdNetVelocityPlugin {
         private void tryPrepare() {
             if (!hello || stage != Stage.VANILLA || !channel.isActive()) return;
             if (!playing()) { retry(this::tryPrepare); return; }
-            if (!authorized()) { stage = Stage.REJECTED; cancelTimeout(); return; }
+            if (!authorized()) { rejectBeforeNegotiation(); return; }
             ensureTimeout();
             try {
                 inboundAccount = adapter.inboundAccount(channel);
             } catch (ReflectiveOperationException | RuntimeException error) {
-                stage = Stage.REJECTED;
-                cancelTimeout();
-                logger.warn("ZstdNet skipped unsupported native packet limiter for {}; using vanilla networking.", player.getUsername());
+                rejectBeforeNegotiation();
+                logger.warn("ZstdNet unsupported native packet limiter for {}; require_client={}.",
+                        player.getUsername(), settings.requireClient());
                 return;
             }
             stage = Stage.WAIT_READY;
@@ -571,6 +619,11 @@ public final class ZstdNetVelocityPlugin {
         }
 
         private void fail(String reason, Throwable error) {
+            if (settings.requireClient() && stage != Stage.PREPARING && stage != Stage.ACTIVE) {
+                if (settings.debug()) logger.warn("ZstdNet {}: {}", player.getUsername(), reason, error);
+                rejectRequiredClient();
+                return;
+            }
             stage = Stage.REJECTED;
             cancelTimeout();
             if (settings.debug()) logger.warn("ZstdNet {}: {}", player.getUsername(), reason, error);
@@ -580,6 +633,7 @@ public final class ZstdNetVelocityPlugin {
 
         private void fallback() {
             if (stage == Stage.ACTIVE) return;
+            if (settings.requireClient()) { rejectRequiredClient(); return; }
             stage = Stage.REJECTED;
             cancelTimeout();
             gate.release(false);
@@ -675,8 +729,9 @@ public final class ZstdNetVelocityPlugin {
                 return;
             }
             long active = sessions.values().stream().filter(session -> session.stage == Stage.ACTIVE).count();
-            invocation.source().sendMessage(Component.text("ZstdNet 2.1: " + (enabled ? "enabled" : "disabled")
-                    + ", active=" + active + ", level=" + settings.level() + ", target=Velocity 4.3.0 build 44"));
+            invocation.source().sendMessage(Component.text("ZstdNet 2.1.1: " + (enabled ? "enabled" : "disabled")
+                    + ", active=" + active + ", level=" + settings.level() + ", require_client=" + settings.requireClient()
+                    + ", target=Velocity 4.3.0 build 44"));
             if (invocation.arguments().length == 1 && invocation.arguments()[0].equalsIgnoreCase("statistics")) {
                 TrafficRuntime history = traffic;
                 if (history != null) {

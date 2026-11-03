@@ -19,9 +19,16 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 record ProxySettings(boolean enabled, int level, boolean debug, int maxConnectionsPerIp,
-                     int maxRequestsPerWindow, Duration requestWindow, Duration banDuration, Set<UUID> reportAdminUuids) {
+                     int maxRequestsPerWindow, Duration requestWindow, Duration banDuration, Set<UUID> reportAdminUuids,
+                     boolean requireClient) {
     ProxySettings {
         reportAdminUuids = Set.copyOf(reportAdminUuids);
+    }
+
+    ProxySettings(boolean enabled, int level, boolean debug, int maxConnectionsPerIp,
+                  int maxRequestsPerWindow, Duration requestWindow, Duration banDuration, Set<UUID> reportAdminUuids) {
+        this(enabled, level, debug, maxConnectionsPerIp, maxRequestsPerWindow, requestWindow, banDuration,
+                reportAdminUuids, false);
     }
 
     ProxySettings(boolean enabled, int level, boolean debug, int maxConnectionsPerIp,
@@ -32,6 +39,20 @@ record ProxySettings(boolean enabled, int level, boolean debug, int maxConnectio
         return new ProxySettings(enabled, 9, false, 64, 50, Duration.ofSeconds(10), Duration.ofMinutes(1));
     }
 
+    // Preserve admission policy even if another setting prevents transport initialization.
+    static ProxySettings startupPolicy(Path directory) throws IOException {
+        Path file = directory.resolve("zstdnet.properties");
+        boolean required = false;
+        if (Files.exists(file)) {
+            Properties properties = new Properties();
+            try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) { properties.load(reader); }
+            String value = properties.getProperty("require_client");
+            // A misspelled explicit requirement must not silently allow uncompressed clients.
+            required = value != null && !value.trim().equalsIgnoreCase("false");
+        }
+        return new ProxySettings(false, 9, false, 64, 50, Duration.ofSeconds(10), Duration.ofMinutes(1), Set.of(), required);
+    }
+
     static ProxySettings load(Path directory) throws IOException {
         Files.createDirectories(directory);
         Path file = directory.resolve("zstdnet.properties");
@@ -40,6 +61,8 @@ record ProxySettings(boolean enabled, int level, boolean debug, int maxConnectio
                     # ZstdNet Velocity 2.1: client <-> proxy transport.
                     # Keep Velocity online-mode=true and modern player forwarding enabled.
                     enabled=true
+                    # Require successful ZstdNet negotiation; reject vanilla/incompatible clients.
+                    require_client=false
                     # Compression level: 1-22. Higher values use more CPU; the window stays bounded.
                     level=9
                     debug=false
@@ -57,6 +80,7 @@ record ProxySettings(boolean enabled, int level, boolean debug, int maxConnectio
             properties.load(reader);
         }
         boolean enabled = strictBoolean(properties, "enabled", true);
+        boolean requireClient = strictBoolean(properties, "require_client", false);
         boolean debug = strictBoolean(properties, "debug", false);
         int level = integer(properties, "level", 9);
         if (level < 1 || level > 22) throw new IOException("ZstdNet level must be from 1 to 22");
@@ -72,6 +96,7 @@ record ProxySettings(boolean enabled, int level, boolean debug, int maxConnectio
         }
         Map<String, String> defaults = new LinkedHashMap<>();
         defaults.put("enabled", "true"); defaults.put("level", "9"); defaults.put("debug", "false");
+        defaults.put("require_client", "false");
         defaults.put("max_conn_per_ip", "64"); defaults.put("max_req_per_window", "50");
         defaults.put("request_window", "10s"); defaults.put("ban_duration", "1m");
         defaults.put("report_admin_uuids", "");
@@ -81,7 +106,7 @@ record ProxySettings(boolean enabled, int level, boolean debug, int maxConnectio
         });
         if (!missing.isEmpty()) Files.writeString(file, "\n# Added by ZstdNet 2.1\n" + missing,
                 StandardCharsets.UTF_8, StandardOpenOption.APPEND);
-        return new ProxySettings(enabled, level, debug, maxConnections, maxRequests, window, ban, reportAdmins);
+        return new ProxySettings(enabled, level, debug, maxConnections, maxRequests, window, ban, reportAdmins, requireClient);
     }
 
     ProxySettings allowReport(Path directory, UUID player) throws IOException {
@@ -100,7 +125,7 @@ record ProxySettings(boolean enabled, int level, boolean debug, int maxConnectio
             try { Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
             catch (AtomicMoveNotSupportedException error) { Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING); }
         } finally { Files.deleteIfExists(temporary); }
-        return new ProxySettings(enabled, level, debug, maxConnectionsPerIp, maxRequestsPerWindow, requestWindow, banDuration, updated);
+        return new ProxySettings(enabled, level, debug, maxConnectionsPerIp, maxRequestsPerWindow, requestWindow, banDuration, updated, requireClient);
     }
 
     private static int integer(Properties properties, String name, int fallback) throws IOException {

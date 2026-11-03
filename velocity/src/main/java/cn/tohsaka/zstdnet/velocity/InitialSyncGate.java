@@ -86,6 +86,15 @@ final class InitialSyncGate extends ChannelDuplexHandler {
         pendingBytes = 0;
     }
 
+    /** Reject a required-client negotiation without replaying the buffered world data. */
+    void discard() {
+        if (finished) return;
+        finished = true;
+        cancelTimer();
+        failPending();
+        if (context != null && context.pipeline().context(this) != null) context.pipeline().remove(this);
+    }
+
     private void cancelTimer() {
         if (timeout != null) { timeout.cancel(false); timeout = null; }
     }
