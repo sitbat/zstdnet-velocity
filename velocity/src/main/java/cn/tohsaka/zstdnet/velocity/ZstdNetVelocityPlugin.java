@@ -123,7 +123,7 @@ public final class ZstdNetVelocityPlugin {
                         () -> limiter.sweep(System.currentTimeMillis()));
                 traffic.start();
             }
-            logger.info("ZstdNet 2.1.2 loaded: transport={}, level={}, require_client={}, target=Velocity 4.3.0 build 44; native account verification retained.",
+            logger.info("ZstdNet 2.1.3 loaded: transport={}, level={}, require_client={}, target=Velocity 4.3.0 build 44; native account verification retained.",
                     enabled, settings.level(), settings.requireClient());
         } catch (IOException | ReflectiveOperationException | RuntimeException error) {
             enabled = false;
@@ -504,6 +504,7 @@ public final class ZstdNetVelocityPlugin {
         private boolean hello;
         private boolean requiredClient = settings.requireClient();
         private boolean admissionStarted;
+        private boolean configurationAdvertised;
         private final CompletableFuture<Boolean> backendAdmission = new CompletableFuture<>();
         private ScheduledFuture<?> admissionTimeout;
         private ScheduledFuture<?> timeout;
@@ -557,6 +558,23 @@ public final class ZstdNetVelocityPlugin {
             if (admissionTimeout == null) {
                 admissionTimeout = channel.eventLoop().schedule(this::rejectRequiredClient,
                         HANDSHAKE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            }
+            advertiseConfigurationChannel();
+        }
+
+        private void advertiseConfigurationChannel() {
+            if (configurationAdvertised || hello || player.getProtocolState() != ProtocolState.CONFIGURATION) return;
+            configurationAdvertised = true;
+            // Fabric START waits for a server registration/brand packet. No backend exists yet,
+            // so the proxy must advertise its own receiving channel to trigger the client's HELLO.
+            try {
+                channel.writeAndFlush(adapter.packet("minecraft:register",
+                        Unpooled.copiedBuffer(ControlMessage.CHANNEL, StandardCharsets.UTF_8))).addListener(result -> {
+                    if (!result.isSuccess()) fail("could not advertise configuration channel", result.cause());
+                });
+                if (settings.debug()) logger.info("ZstdNet advertised CONFIG channel; waiting for HELLO from {}.", player.getUsername());
+            } catch (ReflectiveOperationException | RuntimeException error) {
+                fail("could not advertise configuration channel", error);
             }
         }
 
@@ -617,6 +635,8 @@ public final class ZstdNetVelocityPlugin {
             }
             if (message.opcode() == ControlMessage.HELLO && stage == Stage.VANILLA) {
                 hello = true;
+                if (settings.debug()) logger.info("ZstdNet received HELLO from {} before backend admission={}",
+                        player.getUsername(), admissionStarted);
                 resolveAdmission(true);
                 tryPrepare();
             } else if (message.opcode() == ControlMessage.READY && stage == Stage.WAIT_READY && synchronous) {
@@ -842,7 +862,7 @@ public final class ZstdNetVelocityPlugin {
                 return;
             }
             long active = sessions.values().stream().filter(session -> session.stage == Stage.ACTIVE).count();
-            invocation.source().sendMessage(Component.text("ZstdNet 2.1.2: " + (enabled ? "enabled" : "disabled")
+            invocation.source().sendMessage(Component.text("ZstdNet 2.1.3: " + (enabled ? "enabled" : "disabled")
                     + ", active=" + active + ", level=" + settings.level() + ", require_client=" + settings.requireClient()
                     + ", target=Velocity 4.3.0 build 44"));
             if (invocation.arguments().length == 1 && invocation.arguments()[0].equalsIgnoreCase("statistics")) {

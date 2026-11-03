@@ -249,6 +249,8 @@ class RequiredClientTest {
         }
 
         CompletableFuture<Void> awaitAdmission() throws Exception {
+            ((MinecraftEncoder) channel.pipeline().get("minecraft-encoder")).setState(
+                    protocol.get() == ProtocolState.CONFIGURATION ? StateRegistry.CONFIG : StateRegistry.PLAY);
             backendEvent = new ServerPreConnectEvent(player, fake(RegisteredServer.class, (name, args) -> null));
             CompletableFuture<Void> checked = new CompletableFuture<>();
             var method = session.getClass().getDeclaredMethod("awaitBackendAdmission", ServerPreConnectEvent.class, CompletableFuture.class);

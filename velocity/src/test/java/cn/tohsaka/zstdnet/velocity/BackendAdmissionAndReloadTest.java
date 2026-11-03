@@ -30,6 +30,47 @@ import static org.junit.jupiter.api.Assertions.*;
 class BackendAdmissionAndReloadTest {
     @TempDir Path directory;
 
+    @Test void configurationProbeIsSentOnlyOnceAndDoesNotApproveAClientWithoutHello() throws Exception {
+        try (Fixture f = new Fixture(true)) {
+            f.protocol.set(ProtocolState.CONFIGURATION);
+            var first = f.awaitAdmission();
+            ByteBuf wire = f.channel.readOutbound();
+            assertNotNull(wire);
+            var decoder = new com.velocitypowered.proxy.protocol.netty.MinecraftDecoder(
+                    com.velocitypowered.proxy.protocol.ProtocolUtils.Direction.CLIENTBOUND);
+            decoder.setProtocolVersion(com.velocitypowered.api.network.ProtocolVersion.MINECRAFT_1_21_11);
+            decoder.setState(com.velocitypowered.proxy.protocol.StateRegistry.CONFIG);
+            var receiver = new io.netty.channel.embedded.EmbeddedChannel(decoder);
+            try {
+                receiver.writeInbound(wire);
+                com.velocitypowered.proxy.protocol.packet.PluginMessagePacket packet = receiver.readInbound();
+                assertNotNull(packet);
+                try {
+                    assertEquals("minecraft:register", packet.getChannel());
+                    assertEquals(ControlMessage.CHANNEL, packet.content().toString(java.nio.charset.StandardCharsets.UTF_8));
+                } finally { packet.release(); }
+            } finally { receiver.finishAndReleaseAll(); }
+            var second = f.awaitAdmission();
+            assertNull(f.channel.readOutbound(), "concurrent connects must not spam configuration registration");
+            assertFalse(first.isDone()); assertFalse(second.isDone());
+            f.advance(10);
+            assertTrue(first.isDone()); assertTrue(second.isDone());
+            assertFalse(f.backendEvent.getResult().isAllowed());
+            f.assertGuidedDisconnect();
+        }
+    }
+
+    @Test void helloAlreadyReceivedBeforeAdmissionDoesNotNeedAProbe() throws Exception {
+        try (Fixture f = new Fixture(true)) {
+            f.protocol.set(ProtocolState.CONFIGURATION);
+            f.receive(ControlMessage.HELLO, ControlMessage.VERSION);
+            var checked = f.awaitAdmission();
+            assertTrue(checked.isDone());
+            assertTrue(f.backendEvent.getResult().isAllowed());
+            assertNull(f.channel.readOutbound());
+        }
+    }
+
     @Test void configurationHelloReleasesInitialBackendEventBeforePlayWithoutWaitingForWorldPackets() throws Exception {
         try (Fixture f = new Fixture(true)) {
             f.protocol.set(ProtocolState.CONFIGURATION);
@@ -61,6 +102,7 @@ class BackendAdmissionAndReloadTest {
         try (Fixture f = new Fixture(true)) {
             f.protocol.set(ProtocolState.CONFIGURATION);
             var waiting = f.awaitAdmission();
+            f.drainOutbound();
             f.receive(ControlMessage.HELLO, 99);
             assertTrue(waiting.isDone());
             assertFalse(f.backendEvent.getResult().isAllowed());

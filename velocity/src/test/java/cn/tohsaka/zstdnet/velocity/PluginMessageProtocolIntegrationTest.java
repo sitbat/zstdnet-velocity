@@ -95,7 +95,14 @@ class PluginMessageProtocolIntegrationTest {
             throws Exception {
         EmbeddedChannel sender = sender(version, StateRegistry.CONFIG, ProtocolUtils.Direction.SERVERBOUND);
         EmbeddedChannel receiver = receiver(version, StateRegistry.CONFIG, ProtocolUtils.Direction.SERVERBOUND);
+        EmbeddedChannel discoveryReceiver = receiver(version, StateRegistry.CONFIG, ProtocolUtils.Direction.CLIENTBOUND);
         try {
+            receiver.pipeline().addLast("compression-encoder", new MinecraftCompressorAndLengthEncoder(256, Natives.compress.get().create(3)));
+            MinecraftEncoder outbound = new MinecraftEncoder(ProtocolUtils.Direction.CLIENTBOUND);
+            outbound.setProtocolVersion(version); outbound.setState(StateRegistry.CONFIG);
+            receiver.pipeline().addLast("minecraft-encoder", outbound);
+            receiver.pipeline().addLast("play-packet-queue-outbound",
+                    new com.velocitypowered.proxy.protocol.netty.PlayPacketQueueOutboundHandler(version, ProtocolUtils.Direction.CLIENTBOUND));
             VelocityAccess access = new VelocityAccess();
             Object session = installProductionInterceptor(receiver, access);
             var playerField = session.getClass().getDeclaredField("player"); playerField.setAccessible(true);
@@ -105,21 +112,55 @@ class PluginMessageProtocolIntegrationTest {
             var await = session.getClass().getDeclaredMethod("awaitBackendAdmission", ServerPreConnectEvent.class, CompletableFuture.class);
             await.setAccessible(true); await.invoke(session, event, admitted);
             assertFalse(admitted.isDone(), "no backend is allowed before CONFIG HELLO");
-            sender.writeAndFlush(access.packet(ControlMessage.HELLO));
-            transferFragmented(sender, receiver);
+            ByteBuf discoveryWire = receiver.readOutbound();
+            assertNotNull(discoveryWire);
+            try {
+                String fixtures = System.getenv("ZSTDNET_DISCOVERY_FIXTURES");
+                if (fixtures != null) {
+                    java.nio.file.Files.createDirectories(Path.of(fixtures));
+                    byte[] bytes = new byte[discoveryWire.readableBytes()]; discoveryWire.getBytes(discoveryWire.readerIndex(), bytes);
+                    java.nio.file.Files.write(Path.of(fixtures, "discovery-" + version.getProtocol() + ".bin"), bytes);
+                }
+                while (discoveryWire.isReadable()) discoveryReceiver.writeInbound(discoveryWire.readRetainedSlice(Math.min(2, discoveryWire.readableBytes())));
+            } finally { discoveryWire.release(); }
+            PluginMessagePacket registration = discoveryReceiver.readInbound();
+            assertNotNull(registration, "the proxy must proactively start Fabric's CONFIG handshake");
+            try {
+                assertEquals("minecraft:register", registration.getChannel());
+                assertEquals(ControlMessage.CHANNEL, registration.content().toString(java.nio.charset.StandardCharsets.UTF_8));
+            } finally { registration.release(); }
+            assertNull(discoveryReceiver.readInbound(), "no PREPARE/ACTIVATE belongs in initial CONFIG");
+            String fixtures = System.getenv("ZSTDNET_DISCOVERY_FIXTURES");
+            Path reply = fixtures == null ? null : Path.of(fixtures, "hello-" + version.getProtocol() + ".bin");
+            boolean replayRequired = "true".equalsIgnoreCase(System.getenv("ZSTDNET_DISCOVERY_REPLAY"));
+            if (replayRequired) assertTrue(reply != null && java.nio.file.Files.isRegularFile(reply), "A real Fabric reply is required for this run");
+            if (reply != null && java.nio.file.Files.exists(reply)) {
+                byte[] bytes = java.nio.file.Files.readAllBytes(reply);
+                for (int i = 0; i < bytes.length; i += 2) receiver.writeInbound(io.netty.buffer.Unpooled.wrappedBuffer(bytes, i, Math.min(2, bytes.length - i)));
+                receiver.checkException();
+            } else {
+                sender.writeAndFlush(access.packet(ControlMessage.HELLO));
+                transferFragmented(sender, receiver);
+            }
             assertTrue(admitted.isDone(), "the real encrypted CONFIG HELLO must release the backend event");
             assertTrue(event.getResult().isAllowed());
+            if (replayRequired) System.out.println("CONFIG_DISCOVERY_REAL_CLIENT_REPLY_OK: protocol=" + version.getProtocol());
 
             var hello = session.getClass().getDeclaredField("hello");
             hello.setAccessible(true);
             assertTrue(hello.getBoolean(session), "the actual Session must receive the CONFIG HELLO");
-            assertNull(receiver.readInbound(), "the reserved control must not reach the downstream handler/backend");
+            PluginMessagePacket normal;
+            while ((normal = receiver.readInbound()) != null) {
+                try { assertFalse(access.controlPacket(normal), "transport controls cannot reach the backend"); }
+                finally { normal.release(); }
+            }
             assertNull(receiver.readOutbound(), "CONFIG must not send PREPARE or ACTIVATE");
             assertFalse(TransportConnection.isActive(receiver), "authentication/PLAY boundary must remain intact");
             assertNull(receiver.pipeline().get("zstdnet-proxy-decode"));
         } finally {
             sender.finishAndReleaseAll();
             receiver.finishAndReleaseAll();
+            discoveryReceiver.finishAndReleaseAll();
         }
     }
 
