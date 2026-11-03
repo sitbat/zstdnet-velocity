@@ -6,6 +6,8 @@ import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.config.ProxyConfig;
+import com.velocitypowered.api.event.player.ServerPreConnectEvent;
+import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.natives.util.Natives;
 import com.velocitypowered.proxy.protocol.ProtocolUtils;
 import com.velocitypowered.proxy.protocol.StateRegistry;
@@ -34,6 +36,9 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.stream.Stream;
+import java.util.concurrent.CompletableFuture;
+import java.time.Duration;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -93,8 +98,17 @@ class PluginMessageProtocolIntegrationTest {
         try {
             VelocityAccess access = new VelocityAccess();
             Object session = installProductionInterceptor(receiver, access);
+            var playerField = session.getClass().getDeclaredField("player"); playerField.setAccessible(true);
+            Player player = (Player) playerField.get(session);
+            var event = new ServerPreConnectEvent(player, fake(RegisteredServer.class, (name, args) -> null), null);
+            CompletableFuture<Void> admitted = new CompletableFuture<>();
+            var await = session.getClass().getDeclaredMethod("awaitBackendAdmission", ServerPreConnectEvent.class, CompletableFuture.class);
+            await.setAccessible(true); await.invoke(session, event, admitted);
+            assertFalse(admitted.isDone(), "no backend is allowed before CONFIG HELLO");
             sender.writeAndFlush(access.packet(ControlMessage.HELLO));
             transferFragmented(sender, receiver);
+            assertTrue(admitted.isDone(), "the real encrypted CONFIG HELLO must release the backend event");
+            assertTrue(event.getResult().isAllowed());
 
             var hello = session.getClass().getDeclaredField("hello");
             hello.setAccessible(true);
@@ -126,6 +140,9 @@ class PluginMessageProtocolIntegrationTest {
         var enabled = ZstdNetVelocityPlugin.class.getDeclaredField("enabled");
         enabled.setAccessible(true);
         enabled.setBoolean(plugin, true);
+        var settings = ZstdNetVelocityPlugin.class.getDeclaredField("settings"); settings.setAccessible(true);
+        settings.set(plugin, new ProxySettings(true, 9, false, 64, 50,
+                Duration.ofSeconds(10), Duration.ofMinutes(1), Set.of(), true));
         Class<?> sessionType = Class.forName(ZstdNetVelocityPlugin.class.getName() + "$Session");
         var sessionConstructor = sessionType.getDeclaredConstructor(
                 ZstdNetVelocityPlugin.class, Player.class, Channel.class, VelocityAccess.class);

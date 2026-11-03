@@ -86,13 +86,15 @@ final class InitialSyncGate extends ChannelDuplexHandler {
         pendingBytes = 0;
     }
 
-    /** Reject a required-client negotiation without replaying the buffered world data. */
-    void discard() {
+    /** Keep write-failure listeners dormant until the intentional disconnect has reached the wire. */
+    void discardOnClose() {
         if (finished) return;
         finished = true;
         cancelTimer();
-        failPending();
-        if (context != null && context.pipeline().context(this) != null) context.pipeline().remove(this);
+        if (context != null) {
+            context.channel().closeFuture().addListener(ignored -> failPending());
+            if (context.pipeline().context(this) != null) context.pipeline().remove(this);
+        }
     }
 
     private void cancelTimer() {

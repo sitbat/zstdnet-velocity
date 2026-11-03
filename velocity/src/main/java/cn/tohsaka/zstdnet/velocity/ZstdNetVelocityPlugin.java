@@ -6,13 +6,16 @@ import cn.tohsaka.zstdnet.velocity.stats.TrafficReportRange;
 import com.google.inject.Inject;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.event.PostOrder;
+import com.velocitypowered.api.event.EventTask;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.DisconnectEvent;
+import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.connection.PluginMessageEvent;
 import com.velocitypowered.api.event.connection.PostLoginEvent;
 import com.velocitypowered.api.event.connection.PreLoginEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
+import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.network.ProtocolState;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.Player;
@@ -120,7 +123,7 @@ public final class ZstdNetVelocityPlugin {
                         () -> limiter.sweep(System.currentTimeMillis()));
                 traffic.start();
             }
-            logger.info("ZstdNet 2.1.1 loaded: transport={}, level={}, require_client={}, target=Velocity 4.3.0 build 44; native account verification retained.",
+            logger.info("ZstdNet 2.1.2 loaded: transport={}, level={}, require_client={}, target=Velocity 4.3.0 build 44; native account verification retained.",
                     enabled, settings.level(), settings.requireClient());
         } catch (IOException | ReflectiveOperationException | RuntimeException error) {
             enabled = false;
@@ -159,6 +162,61 @@ public final class ZstdNetVelocityPlugin {
         ConnectionLimiter.Lease existing = leases.putIfAbsent(player, lease);
         if (existing != null) lease.close();
         attach(player, null);
+    }
+
+    @Subscribe(order = PostOrder.LAST)
+    public void login(LoginEvent event) {
+        // Queue installation before AuthSessionHandler queues LoginSuccess/CONFIG on this event loop.
+        // A CONFIG HELLO arriving before PostLogin would otherwise be dropped without a backend.
+        if (enabled && event.getResult().isAllowed()) attach(event.getPlayer(), null);
+    }
+
+    @Subscribe(order = PostOrder.LAST)
+    public EventTask preConnect(ServerPreConnectEvent event) {
+        Player player = event.getPlayer();
+        // Existing online players are not evicted by a reload, including on backend switches.
+        if (!settings.requireClient() || event.getPreviousServer() != null || player.getCurrentServer().isPresent()
+                || event.getResult().getServer().isEmpty()) return null;
+        if (!enabled || access == null) {
+            event.setResult(ServerPreConnectEvent.ServerResult.denied());
+            player.disconnect(REQUIRED_CLIENT_MESSAGE);
+            return null;
+        }
+        CompletableFuture<Void> checked = new CompletableFuture<>();
+        try {
+            Channel channel = access.channel(player);
+            attach(player, null);
+            channel.eventLoop().execute(() -> {
+                Session session = channel.attr(SESSION).get();
+                if (session == null || !channel.isActive()) {
+                    event.setResult(ServerPreConnectEvent.ServerResult.denied());
+                    if (channel.isActive()) player.disconnect(REQUIRED_CLIENT_MESSAGE);
+                    checked.complete(null);
+                    return;
+                }
+                session.awaitBackendAdmission(event, checked);
+            });
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            event.setResult(ServerPreConnectEvent.ServerResult.denied());
+            player.disconnect(REQUIRED_CLIENT_MESSAGE);
+            checked.complete(null);
+        }
+        return EventTask.resumeWhenComplete(checked);
+    }
+
+    private void reloadSettings() throws IOException {
+        ProxySettings updated = ProxySettings.load(directory);
+        if (updated.enabled() != settings.enabled()) {
+            throw new IOException("Changing enabled requires a Velocity restart; no settings were applied.");
+        }
+        // Preserve live connection leases, bans and request history while changing their limits.
+        ConnectionLimiter current = limiter;
+        if (current != null) current.reconfigure(updated);
+        settings = updated;
+        for (Session session : sessions.values()) {
+            try { session.channel.eventLoop().execute(() -> session.configurationReloaded(updated)); }
+            catch (RejectedExecutionException ignored) { /* The connection's event loop has already stopped. */ }
+        }
     }
 
     @Subscribe(order = PostOrder.FIRST)
@@ -248,7 +306,6 @@ public final class ZstdNetVelocityPlugin {
                                 payload -> attached.sendAuxiliary(AuxiliaryProtocol.HUD, payload));
                         channel.pipeline().addBefore("minecraft-encoder", INITIAL_GATE, session.gate);
                         channel.pipeline().addBefore("handler", INTERCEPTOR, new ControlInterceptor(session, current));
-                        session.awaitRequiredClient();
                     }
                     if (firstMessage != null) session.receive(firstMessage, false);
                 } catch (RuntimeException error) {
@@ -445,6 +502,10 @@ public final class ZstdNetVelocityPlugin {
         private volatile Stage stage = Stage.VANILLA;
         private int messages;
         private boolean hello;
+        private boolean requiredClient = settings.requireClient();
+        private boolean admissionStarted;
+        private final CompletableFuture<Boolean> backendAdmission = new CompletableFuture<>();
+        private ScheduledFuture<?> admissionTimeout;
         private ScheduledFuture<?> timeout;
         private ScheduledFuture<?> retry;
         private IntConsumer inboundAccount;
@@ -458,7 +519,7 @@ public final class ZstdNetVelocityPlugin {
             this.channel = channel;
             this.adapter = adapter;
             gate = new InitialSyncGate("minecraft-encoder",
-                    () -> (hello || settings.requireClient()) && stage != Stage.ACTIVE && stage != Stage.REJECTED && playing(),
+                    () -> hello && stage != Stage.ACTIVE && stage != Stage.REJECTED && playing(),
                     this::tryPrepare, this::fallback);
         }
 
@@ -477,18 +538,45 @@ public final class ZstdNetVelocityPlugin {
             }
         }
 
-        // Configuration/resource-pack loading does not consume the PLAY negotiation deadline.
-        private void awaitRequiredClient() {
-            if (!settings.requireClient() || finished.get() || !channel.isActive()
-                    || stage == Stage.ACTIVE || stage == Stage.REJECTED) return;
-            if (playing()) {
-                ensureTimeout();
-                if (hello) tryPrepare();
-            } else retry(this::awaitRequiredClient);
+        private void awaitBackendAdmission(ServerPreConnectEvent event, CompletableFuture<Void> checked) {
+            if (!channel.isActive() || finished.get() || stage == Stage.REJECTED || !authorized()) {
+                event.setResult(ServerPreConnectEvent.ServerResult.denied());
+                if (channel.isActive()) rejectRequiredClient();
+                checked.complete(null);
+                return;
+            }
+            backendAdmission.thenAccept(allowed -> {
+                if (!allowed) event.setResult(ServerPreConnectEvent.ServerResult.denied());
+                checked.complete(null);
+            });
+            admissionStarted = true;
+            requiredClient = settings.requireClient();
+            if (!requiredClient) { resolveAdmission(true); return; }
+            if (stage == Stage.REJECTED || !authorized()) { rejectRequiredClient(); return; }
+            if (hello || stage == Stage.ACTIVE) { resolveAdmission(true); return; }
+            if (admissionTimeout == null) {
+                admissionTimeout = channel.eventLoop().schedule(this::rejectRequiredClient,
+                        HANDSHAKE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            }
+        }
+
+        private void resolveAdmission(boolean allowed) {
+            if (admissionTimeout != null) { admissionTimeout.cancel(false); admissionTimeout = null; }
+            backendAdmission.complete(allowed);
+        }
+
+        private void configurationReloaded(ProxySettings updated) {
+            // Disabling the requirement releases pending initial connects without restarting their clocks.
+            if (!updated.requireClient() && stage != Stage.ACTIVE) requiredClient = false;
+            if (!admissionStarted && !backendAdmission.isDone()) requiredClient = updated.requireClient();
+            if (!updated.requireClient() && admissionStarted && !backendAdmission.isDone()) {
+                requiredClient = false;
+                resolveAdmission(true);
+            }
         }
 
         private void rejectBeforeNegotiation() {
-            if (settings.requireClient()) { rejectRequiredClient(); return; }
+            if (requiredClient) { rejectRequiredClient(); return; }
             stage = Stage.REJECTED;
             cancelTimeout();
         }
@@ -496,8 +584,11 @@ public final class ZstdNetVelocityPlugin {
         private void rejectRequiredClient() {
             stage = Stage.REJECTED;
             cancelTimeout();
-            gate.discard();
+            // Failing queued backend promises first makes Velocity send its generic internal error.
+            // Settle them only once the guided disconnect has flushed and the channel is closed.
+            gate.discardOnClose();
             player.disconnect(REQUIRED_CLIENT_MESSAGE);
+            resolveAdmission(false);
         }
 
         private void receive(byte[] bytes, boolean synchronous) {
@@ -526,6 +617,7 @@ public final class ZstdNetVelocityPlugin {
             }
             if (message.opcode() == ControlMessage.HELLO && stage == Stage.VANILLA) {
                 hello = true;
+                resolveAdmission(true);
                 tryPrepare();
             } else if (message.opcode() == ControlMessage.READY && stage == Stage.WAIT_READY && synchronous) {
                 stage = Stage.WAIT_PLAY;
@@ -619,7 +711,7 @@ public final class ZstdNetVelocityPlugin {
         }
 
         private void fail(String reason, Throwable error) {
-            if (settings.requireClient() && stage != Stage.PREPARING && stage != Stage.ACTIVE) {
+            if (requiredClient && stage != Stage.PREPARING && stage != Stage.ACTIVE) {
                 if (settings.debug()) logger.warn("ZstdNet {}: {}", player.getUsername(), reason, error);
                 rejectRequiredClient();
                 return;
@@ -629,13 +721,15 @@ public final class ZstdNetVelocityPlugin {
             if (settings.debug()) logger.warn("ZstdNet {}: {}", player.getUsername(), reason, error);
             // No stream rollback: closing is the only safe response after a negotiated failure.
             channel.close();
+            resolveAdmission(false);
         }
 
         private void fallback() {
             if (stage == Stage.ACTIVE) return;
-            if (settings.requireClient()) { rejectRequiredClient(); return; }
+            if (requiredClient) { rejectRequiredClient(); return; }
             stage = Stage.REJECTED;
             cancelTimeout();
+            resolveAdmission(false);
             gate.release(false);
             if (settings.debug()) logger.info("ZstdNet negotiation fell back to vanilla for {}.", player.getUsername());
         }
@@ -643,6 +737,7 @@ public final class ZstdNetVelocityPlugin {
         private void finish() {
             if (!finished.compareAndSet(false, true)) return;
             cancelTimeout();
+            resolveAdmission(false);
             TrafficRuntime runtime = traffic;
             if (runtime != null) runtime.untrack(channel);
             sessions.remove(channel, this);
@@ -705,11 +800,29 @@ public final class ZstdNetVelocityPlugin {
         @Override
         public List<String> suggest(Invocation invocation) {
             return invocation.arguments().length > 1 ? List.of("today", "session", "24h", "7d", "30d")
-                    : List.of("status", "statistics", "report", "export", "allowreport");
+                    : List.of("status", "statistics", "report", "export", "allowreport", "reload");
         }
 
         @Override
         public void execute(Invocation invocation) {
+            if (invocation.arguments().length == 1 && invocation.arguments()[0].equalsIgnoreCase("reload")) {
+                if (!invocation.source().hasPermission("zstdnet.admin")) return;
+                try {
+                    reportWorker.execute(() -> {
+                        try {
+                            reloadSettings();
+                            invocation.source().sendMessage(Component.text("ZstdNet 配置已重载，require_client="
+                                    + settings.requireClient() + "；新登录按新设置检查，已在线玩家保持连接。"));
+                        } catch (IOException | RuntimeException error) {
+                            logger.warn("ZstdNet configuration reload failed; previous settings retained.", error);
+                            invocation.source().sendMessage(Component.text("ZstdNet 重载失败，原设置保留：" + error.getMessage()));
+                        }
+                    });
+                } catch (RejectedExecutionException error) {
+                    invocation.source().sendMessage(Component.text("Report service is busy; try again later."));
+                }
+                return;
+            }
             if (invocation.arguments().length >= 1 && invocation.arguments()[0].equalsIgnoreCase("allowreport")) {
                 if (!invocation.source().hasPermission("zstdnet.admin")) return;
                 if (invocation.arguments().length != 2) invocation.source().sendMessage(Component.text("Usage: /zstdnetproxy allowreport <online player>"));
@@ -725,11 +838,11 @@ public final class ZstdNetVelocityPlugin {
             }
             if (invocation.arguments().length > 1 || (invocation.arguments().length == 1
                     && !List.of("status", "statistics").contains(invocation.arguments()[0].toLowerCase(Locale.ROOT)))) {
-                invocation.source().sendMessage(Component.text("Usage: /zstdnetproxy [status|statistics|report <range>]"));
+                invocation.source().sendMessage(Component.text("Usage: /zstdnetproxy [status|statistics|report <range>|reload]"));
                 return;
             }
             long active = sessions.values().stream().filter(session -> session.stage == Stage.ACTIVE).count();
-            invocation.source().sendMessage(Component.text("ZstdNet 2.1.1: " + (enabled ? "enabled" : "disabled")
+            invocation.source().sendMessage(Component.text("ZstdNet 2.1.2: " + (enabled ? "enabled" : "disabled")
                     + ", active=" + active + ", level=" + settings.level() + ", require_client=" + settings.requireClient()
                     + ", target=Velocity 4.3.0 build 44"));
             if (invocation.arguments().length == 1 && invocation.arguments()[0].equalsIgnoreCase("statistics")) {

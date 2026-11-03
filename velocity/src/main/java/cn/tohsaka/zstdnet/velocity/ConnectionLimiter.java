@@ -8,9 +8,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Request admission and authenticated connection leases are deliberately separate. */
 final class ConnectionLimiter {
-    private final ProxySettings settings;
+    private ProxySettings settings;
     private final Map<String, Entry> entries = new HashMap<>();
     ConnectionLimiter(ProxySettings settings) { this.settings = settings; }
+    synchronized void reconfigure(ProxySettings updated) { settings = updated; }
 
     synchronized boolean request(String ip, long now) {
         if (settings.maxRequestsPerWindow() <= 0 || settings.requestWindow().isNegative()

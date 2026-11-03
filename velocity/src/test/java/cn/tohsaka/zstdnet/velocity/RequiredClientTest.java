@@ -2,6 +2,12 @@ package cn.tohsaka.zstdnet.velocity;
 
 import cn.tohsaka.zstdnet.transport.TransportConnection;
 import com.velocitypowered.api.event.connection.PreLoginEvent;
+import com.velocitypowered.api.event.player.ServerPreConnectEvent;
+import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.proxy.protocol.packet.DisconnectPacket;
+import io.netty.channel.ChannelFutureListener;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import com.velocitypowered.api.network.ProtocolState;
 import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.Player;
@@ -56,9 +62,9 @@ class RequiredClientTest {
         assertThrows(java.io.IOException.class, () -> ProxySettings.load(directory));
     }
 
-    @Test void vanillaClientIsRejectedAtPlayDeadlineWithInstallMessage() throws Exception {
+    @Test void vanillaClientIsRejectedBeforeBackendWithInstallMessage() throws Exception {
         try (Fixture f = new Fixture(true)) {
-            f.invoke("awaitRequiredClient");
+            f.awaitAdmission();
             f.advance(9);
             assertNull(f.disconnected.get());
             f.advance(1);
@@ -70,7 +76,7 @@ class RequiredClientTest {
 
     @Test void optionalVanillaClientStillConnects() throws Exception {
         try (Fixture f = new Fixture(false)) {
-            f.invoke("awaitRequiredClient");
+            f.awaitAdmission();
             f.advance(60);
             assertNull(f.disconnected.get());
             assertEquals("VANILLA", f.stage());
@@ -78,17 +84,14 @@ class RequiredClientTest {
         }
     }
 
-    @Test void configurationLoadingDoesNotConsumeThePlayDeadline() throws Exception {
+    @Test void missingHelloInConfigurationTimesOutBeforeAnyBackendAdmission() throws Exception {
         try (Fixture f = new Fixture(true)) {
             f.protocol.set(ProtocolState.CONFIGURATION);
-            f.invoke("awaitRequiredClient");
-            f.advance(60);
-            assertNull(f.disconnected.get());
-            f.protocol.set(ProtocolState.PLAY);
-            f.advance(1); // polling sees the transition and arms the PLAY timer
-            f.advance(9);
-            assertNull(f.disconnected.get());
-            f.advance(1);
+            CompletableFuture<Void> waiting = f.awaitAdmission();
+            assertFalse(waiting.isDone());
+            f.advance(10);
+            assertTrue(waiting.isDone());
+            assertTrue(f.backendEvent.getResult().getServer().isEmpty());
             assertNotNull(f.disconnected.get());
         }
     }
@@ -117,7 +120,7 @@ class RequiredClientTest {
 
     @Test void successfulHandshakeEnablesTransportAndCancelsRejection() throws Exception {
         try (Fixture f = new Fixture(true)) {
-            f.invoke("awaitRequiredClient");
+            f.awaitAdmission();
             f.receive(ControlMessage.HELLO, ControlMessage.VERSION);
             f.receive(ControlMessage.READY, ControlMessage.VERSION);
             f.channel.runPendingTasks();
@@ -130,6 +133,8 @@ class RequiredClientTest {
 
     @Test void requiredGateTimeoutDiscardsWorldDataAndDoesNotBufferTheDisconnect() throws Exception {
         try (Fixture f = new Fixture(true)) {
+            f.receive(ControlMessage.HELLO, ControlMessage.VERSION);
+            f.drainOutbound();
             ByteBuf world = Unpooled.buffer().writeByte(42);
             var pending = f.channel.writeAndFlush(world);
             assertFalse(pending.isDone());
@@ -137,7 +142,7 @@ class RequiredClientTest {
             assertNotNull(f.disconnected.get());
             assertEquals(0, world.refCnt());
             assertFalse(pending.isSuccess());
-            assertNull(f.channel.readOutbound(), "rejected world data must not be replayed");
+            f.assertGuidedDisconnect();
             assertNull(f.channel.pipeline().context(f.gate));
         }
     }
@@ -153,20 +158,22 @@ class RequiredClientTest {
 
     @Test void requiredQueueOverflowRejectsInsteadOfFallingBackToVanilla() throws Exception {
         try (Fixture f = new Fixture(true)) {
+            f.receive(ControlMessage.HELLO, ControlMessage.VERSION);
+            f.drainOutbound();
             ByteBuf world = Unpooled.buffer((int) InitialSyncGate.MAX_BYTES + 1)
                     .writerIndex((int) InitialSyncGate.MAX_BYTES + 1);
             var pending = f.channel.writeAndFlush(world);
             assertNotNull(f.disconnected.get());
             assertEquals(0, world.refCnt());
             assertFalse(pending.isSuccess());
-            assertNull(f.channel.readOutbound());
+            f.assertGuidedDisconnect();
         }
     }
 
     @Test void helloDuringConfigurationContinuesNegotiatingWhenPlayBecomesAvailable() throws Exception {
         try (Fixture f = new Fixture(true)) {
             f.protocol.set(ProtocolState.CONFIGURATION);
-            f.invoke("awaitRequiredClient");
+            f.awaitAdmission();
             f.receive(ControlMessage.HELLO, ControlMessage.VERSION);
             assertEquals("VANILLA", f.stage());
             f.advance(60);
@@ -182,26 +189,38 @@ class RequiredClientTest {
         }
     }
 
-    private static final class Fixture implements AutoCloseable {
+    static final class Fixture implements AutoCloseable {
         final EmbeddedChannel channel = new EmbeddedChannel();
         final AtomicReference<Component> disconnected = new AtomicReference<>();
         final AtomicReference<ProtocolState> protocol = new AtomicReference<>(ProtocolState.PLAY);
         final ZstdNetVelocityPlugin plugin;
         final Object session;
         final InitialSyncGate gate;
+        final Player player;
+        ServerPreConnectEvent backendEvent;
 
-        Fixture(boolean required) throws Exception {
+        Fixture(boolean required) throws Exception { this(required, Path.of("unused")); }
+        Fixture(boolean required, Path directory) throws Exception {
             channel.freezeTime();
             ProxyConfig config = fake(ProxyConfig.class, (name, args) -> name.equals("isOnlineMode") ? true : null);
             ProxyServer proxy = fake(ProxyServer.class, (name, args) -> name.equals("getConfiguration") ? config : null);
-            Player player = fake(Player.class, (name, args) -> switch (name) {
+            player = fake(Player.class, (name, args) -> switch (name) {
                 case "isOnlineMode" -> true;
                 case "getProtocolState" -> protocol.get();
                 case "getUsername" -> "fixture";
-                case "disconnect" -> { disconnected.set((Component) args[0]); yield null; }
+                case "getCurrentServer" -> Optional.empty();
+                case "disconnect" -> {
+                    Component reason = (Component) args[0];
+                    disconnected.compareAndSet(null, reason);
+                    StateRegistry state = protocol.get() == ProtocolState.CONFIGURATION ? StateRegistry.CONFIG : StateRegistry.PLAY;
+                    ((MinecraftEncoder) channel.pipeline().get("minecraft-encoder")).setState(state);
+                    channel.writeAndFlush(DisconnectPacket.create(reason, ProtocolVersion.MINECRAFT_1_21_11, state))
+                            .addListener(ChannelFutureListener.CLOSE);
+                    yield null;
+                }
                 default -> null;
             });
-            plugin = new ZstdNetVelocityPlugin(proxy, LoggerFactory.getLogger(RequiredClientTest.class), Path.of("unused"));
+            plugin = new ZstdNetVelocityPlugin(proxy, LoggerFactory.getLogger(RequiredClientTest.class), directory);
             set(plugin, "enabled", true);
             set(plugin, "settings", new ProxySettings(true, 9, false, 64, 50,
                     Duration.ofSeconds(10), Duration.ofMinutes(1), Set.of(), required));
@@ -224,8 +243,38 @@ class RequiredClientTest {
             var field = type.getDeclaredField("gate"); field.setAccessible(true);
             gate = (InitialSyncGate) field.get(session);
             channel.pipeline().addBefore("minecraft-encoder", "gate", gate);
+            var sessionsField = plugin.getClass().getDeclaredField("sessions"); sessionsField.setAccessible(true);
+            @SuppressWarnings("unchecked") var sessions = (java.util.Map<Channel, Object>) sessionsField.get(plugin);
+            sessions.put(channel, session);
         }
 
+        CompletableFuture<Void> awaitAdmission() throws Exception {
+            backendEvent = new ServerPreConnectEvent(player, fake(RegisteredServer.class, (name, args) -> null));
+            CompletableFuture<Void> checked = new CompletableFuture<>();
+            var method = session.getClass().getDeclaredMethod("awaitBackendAdmission", ServerPreConnectEvent.class, CompletableFuture.class);
+            method.setAccessible(true); method.invoke(session, backendEvent, checked);
+            return checked;
+        }
+        void assertGuidedDisconnect() {
+            ByteBuf wire = channel.readOutbound();
+            assertNotNull(wire, "the guided disconnect must reach the wire");
+            var decoder = new com.velocitypowered.proxy.protocol.netty.MinecraftDecoder(ProtocolUtils.Direction.CLIENTBOUND);
+            decoder.setProtocolVersion(ProtocolVersion.MINECRAFT_1_21_11);
+            decoder.setState(protocol.get() == ProtocolState.CONFIGURATION ? StateRegistry.CONFIG : StateRegistry.PLAY);
+            EmbeddedChannel receiver = new EmbeddedChannel(decoder);
+            try {
+                receiver.writeInbound(wire);
+                DisconnectPacket packet = receiver.readInbound();
+                assertNotNull(packet);
+                assertTrue(packet.getReason().getComponent().toString().contains("zstdnet-client/releases"));
+                assertNull(receiver.readInbound());
+                assertNull(channel.readOutbound(), "only one disconnect should be emitted");
+            } finally { receiver.finishAndReleaseAll(); }
+        }
+        void drainOutbound() {
+            Object message;
+            while ((message = channel.readOutbound()) != null) io.netty.util.ReferenceCountUtil.release(message);
+        }
         void invoke(String name) throws Exception {
             var method = session.getClass().getDeclaredMethod(name); method.setAccessible(true); method.invoke(session);
         }
@@ -241,10 +290,10 @@ class RequiredClientTest {
         @Override public void close() throws Exception { invoke("finish"); channel.finishAndReleaseAll(); }
     }
 
-    private static void set(Object target, String name, Object value) throws Exception {
+    static void set(Object target, String name, Object value) throws Exception {
         var field = target.getClass().getDeclaredField(name); field.setAccessible(true); field.set(target, value);
     }
-    @SuppressWarnings("unchecked") private static <T> T fake(Class<T> type, Answer answer) {
+    @SuppressWarnings("unchecked") static <T> T fake(Class<T> type, Answer answer) {
         return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (proxy, method, args) -> switch (method.getName()) {
             case "hashCode" -> System.identityHashCode(proxy);
             case "equals" -> proxy == args[0];
@@ -252,5 +301,5 @@ class RequiredClientTest {
             default -> answer.value(method.getName(), args);
         });
     }
-    private interface Answer { Object value(String name, Object[] args); }
+    interface Answer { Object value(String name, Object[] args); }
 }
